@@ -1,0 +1,2651 @@
+<!DOCTYPE html>
+<html lang="hi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>Society Vehicle Manager</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#1d4ed8">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+<style>
+  html,body{height:100%;background:#f3f4f6;-webkit-tap-highlight-color:transparent;}
+  ::-webkit-scrollbar{width:6px;height:6px;}
+  ::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:10px;}
+  .no-scrollbar::-webkit-scrollbar{display:none;}
+  .safe-bottom{padding-bottom:env(safe-area-inset-bottom);}
+  .fade-in{animation:fadeIn .18s ease-out;}
+  @keyframes fadeIn{from{opacity:0;transform:translateY(4px);}to{opacity:1;transform:translateY(0);}}
+  .spin{animation:spin 1s linear infinite;}
+  @keyframes spin{to{transform:rotate(360deg);}}
+  .skeleton{background:linear-gradient(90deg,#e5e7eb 25%,#f3f4f6 37%,#e5e7eb 63%);background-size:400% 100%;animation:sk 1.4s ease infinite;}
+  @keyframes sk{0%{background-position:100% 50%}100%{background-position:0 50%}}
+</style>
+</head>
+<body class="text-slate-800">
+<div id="app" class="max-w-md mx-auto min-h-screen bg-gray-100 relative pb-20"></div>
+<div id="modal-root"></div>
+<div id="toast-container" class="fixed top-3 left-1/2 -translate-x-1/2 z-[100] flex flex-col gap-2 w-[92%] max-w-md items-center"></div>
+
+<script>
+/* ============================================================
+   CONFIGURATION — REPLACE THESE TWO VALUES
+   Get them from: Supabase Dashboard -> Project Settings -> API
+============================================================ */
+const SUPABASE_URL = "https://ikrqaqfwzxvovlhrnoyl.supabase.co";
+const SUPABASE_ANON_KEY = "sb_publishable__FrQUPOPdg7rb7M-pTUepQ_WlDQKuSg";
+
+const supabaseClient = (SUPABASE_URL.indexOf('YOUR-PROJECT') === -1)
+  ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
+  : null;
+
+/* ============================================================
+   CONSTANTS
+============================================================ */
+const NORMAL_TOWERS = ['B','D','E','F','W','H'];
+const CORE_TOWERS = ['A','C','J','G'];
+const ALL_TOWER_CODES = [...NORMAL_TOWERS, ...CORE_TOWERS];
+
+const ALL_PERMISSIONS = [
+  'view_dashboard','view_vehicles','add_vehicles','edit_vehicles','delete_vehicles',
+  'import_pdf','bulk_add','view_problems','manage_users','create_admins',
+  'manage_towers','manage_flats','view_profiles','call_users','message_users','manage_settings'
+];
+
+const PERMISSION_LABELS = {
+  view_dashboard:'Dashboard देखें', view_vehicles:'Vehicles देखें', add_vehicles:'Vehicle जोड़ें',
+  edit_vehicles:'Vehicle Edit करें', delete_vehicles:'Vehicle हटाएं', import_pdf:'PDF Import',
+  bulk_add:'Bulk Add', view_problems:'Problems देखें', manage_users:'Users Manage करें',
+  create_admins:'Admins बनाएं', manage_towers:'Towers Manage करें', manage_flats:'Flats Manage करें',
+  view_profiles:'Profiles देखें', call_users:'Call करें', message_users:'Message करें',
+  manage_settings:'Settings Manage करें'
+};
+
+const DEFAULT_TOWER_SETTINGS = [
+  ...NORMAL_TOWERS.map(c => ({ tower_code:c, tower_type:'normal', upper_floors:30, flats_per_floor:5 })),
+  ...CORE_TOWERS.map(c => ({ tower_code:c, tower_type:'core', cores:3, core_upper_floors:4, flats_per_core:4 }))
+];
+
+/* ============================================================
+   ICONS — inline SVG, no external library
+============================================================ */
+const ICONS = {
+  home: '<path d="M3 11.5 12 4l9 7.5"/><path d="M5 10v9a1 1 0 0 0 1 1h4v-6h4v6h4a1 1 0 0 0 1-1v-9"/>',
+  car: '<path d="M3 13l1.6-4.8A2 2 0 0 1 6.5 7h11a2 2 0 0 1 1.9 1.2L21 13"/><rect x="2.5" y="13" width="19" height="6" rx="1.5"/><circle cx="7" cy="19.5" r="1.6"/><circle cx="17" cy="19.5" r="1.6"/>',
+  search: '<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>',
+  trash: '<path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2m-8 0 1 13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1l1-13"/>',
+  edit: '<path d="M4 20h4L18.5 9.5a2.1 2.1 0 0 0-3-3L5 17v3z"/>',
+  settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6V21a2 2 0 1 1-4 0v-.2a1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.6-1H3a2 2 0 1 1 0-4h.2a1.7 1.7 0 0 0 1.5-1 1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H9a1.7 1.7 0 0 0 1-1.6V3a2 2 0 1 1 4 0v.2a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V9c.2.6.7 1 1.6 1H21a2 2 0 1 1 0 4h-.2a1.7 1.7 0 0 0-1.4 1z"/>',
+  user: '<circle cx="12" cy="8" r="3.6"/><path d="M4.5 20a7.5 7.5 0 0 1 15 0"/>',
+  phone: '<path d="M6.6 10.8a15 15 0 0 0 6.6 6.6l2.2-2.2a1.5 1.5 0 0 1 1.5-.4c1 .3 2.1.5 3.2.5.8 0 1.4.6 1.4 1.4V20a1.4 1.4 0 0 1-1.4 1.4C10.4 21.4 2.6 13.6 2.6 4.9A1.4 1.4 0 0 1 4 3.5h3.3c.8 0 1.4.6 1.4 1.4 0 1.1.2 2.2.5 3.2.1.5 0 1.1-.4 1.5z"/>',
+  message: '<path d="M4 5h16a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H8l-4 4V6a1 1 0 0 1 1-1z"/>',
+  parking: '<rect x="3" y="3" width="18" height="18" rx="3"/><path d="M9 16V7h3.5a2.75 2.75 0 1 1 0 5.5H9"/>',
+  building: '<rect x="4" y="3" width="16" height="18" rx="1"/><path d="M9 7h1M14 7h1M9 11h1M14 11h1M9 15h1M14 15h1"/><path d="M10 21v-3h4v3"/>',
+  warning: '<path d="M12 3.5 21.5 20h-19z"/><path d="M12 10v4.2M12 17.2h.01"/>',
+  duplicate: '<rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/>',
+  pdf: '<path d="M6 2h9l5 5v13a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z"/><path d="M14 2v5h5"/><path d="M8.5 17.5v-4h1.2a1.5 1.5 0 1 1 0 3H8.5m5-3v4m0-4h1.5m-1.5 2h1.2m3-2v4m0-4h1.8"/>',
+  camera: '<path d="M4 8.5A1.5 1.5 0 0 1 5.5 7h2l1-2h7l1 2h2A1.5 1.5 0 0 1 20 8.5v9A1.5 1.5 0 0 1 18.5 19h-13A1.5 1.5 0 0 1 4 17.5z"/><circle cx="12" cy="13" r="3.4"/>',
+  logout: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/>',
+  admin: '<path d="M12 3 4 6.5V11c0 5 3.4 8.7 8 10 4.6-1.3 8-5 8-10V6.5z"/><path d="m9 12 2 2 4-4"/>',
+  shield: '<path d="M12 3 4 6.5V11c0 5 3.4 8.7 8 10 4.6-1.3 8-5 8-10V6.5z"/>',
+  close: '<path d="M5 5l14 14M19 5 5 19"/>',
+  check: '<path d="M4 12l5 5L20 6"/>',
+  chevron: '<path d="M9 6l6 6-6 6"/>',
+  filter: '<path d="M4 5h16M7 12h10M10 19h4"/>',
+  upload: '<path d="M12 16V4m0 0 5 5m-5-5-5 5"/><path d="M4 16v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/>',
+  eye: '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/>',
+  more: '<circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/>',
+  back: '<path d="M15 18l-6-6 6-6"/>',
+  bell: '<path d="M6 9a6 6 0 1 1 12 0c0 4 1.5 5.5 1.5 5.5H4.5S6 13 6 9z"/><path d="M10 19a2 2 0 0 0 4 0"/>'
+};
+function icon(name, cls){
+  return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="'+(cls||'w-6 h-6')+'">'+(ICONS[name]||'')+'</svg>';
+}
+
+/* ============================================================
+   GLOBAL STATE
+============================================================ */
+const state = {
+  session: null,
+  profile: null,
+  permissions: new Set(),
+  towers: JSON.parse(JSON.stringify(DEFAULT_TOWER_SETTINGS)),
+  societyName: 'My Society',
+  adminWhatsapp: '',
+  page: 'login',
+  authError: '',
+  authMsg: '',
+  loading: true,
+  vehicles: [],
+  problems: [],
+  users: [],
+  alerts: [],
+  alertsLoaded: false,
+  sendAlertVehicleId: null,
+  alertFoundTower: '',
+  alertMessage: '',
+  pendingGuards: [],
+  vehicleRequests: [],
+  approvalsLoaded: false,
+  attendance: [],
+  attendanceLoaded: false,
+  attendanceOpenMonth: undefined,
+  attendanceGuardId: null,
+  attendanceGuardName: '',
+  dutyPosts: [],
+  dutyPostsLoaded: false,
+  broadcastAlerts: [],
+  broadcastAlertsLoaded: false,
+  addGuardForm: null,
+  resetPasswordUserId: null,
+  vehiclesLoaded:false, problemsLoaded:false, usersLoaded:false,
+  searchQuery: '',
+  filters: { tower:'', floor:'', flat:'' },
+  addVehicle: { tower:'', floor:'', flat:'', vehicle_number:'', vehicle_type:'car', parking_number:'', notes:'' },
+  vehicleTypeFilter: '',
+  viewingVehicleId: null,
+  editingVehicle: null,
+  editForm: null,
+  selectedUserId: null,
+  bulkText: '',
+  bulkResult: null,
+  pdfResult: null,
+  pdfBusy: false,
+  cameraOn: false,
+  cameraBusy: false,
+  cameraResult: null,
+  showMoreSheet: false,
+  profileForm: null,
+  authTab: 'phone',
+  searchFocus: false,
+};
+
+function hasPerm(key){
+  if(!state.profile) return false;
+  if(state.profile.roles && state.profile.roles.name === 'super_admin') return true;
+  return state.permissions.has(key);
+}
+function isAdminRole(){
+  return !!(state.profile && state.profile.roles && (state.profile.roles.name==='admin' || state.profile.roles.name==='super_admin'));
+}
+
+/* ============================================================
+   HELPERS
+============================================================ */
+function normalizeVehicleNumber(str){
+  return (str||'').toUpperCase().replace(/[\s\-]/g,'');
+}
+function pad2(n){ n = parseInt(n,10); return n<10 ? '0'+n : ''+n; }
+
+function getTower(code){
+  return state.towers.find(t=>t.tower_code===code);
+}
+function buildFloors(t){
+  if(!t) return [];
+  if(t.tower_type === 'normal'){
+    const arr=['Ground'];
+    for(let i=1;i<=t.upper_floors;i++) arr.push(String(i));
+    return arr;
+  } else {
+    const arr=['Ground'];
+    for(let i=1;i<=t.core_upper_floors;i++) arr.push(String(i));
+    return arr;
+  }
+}
+function buildFlats(t, floorLabel){
+  if(!t || !floorLabel) return [];
+  const floorNum = floorLabel==='Ground' ? 0 : parseInt(floorLabel,10);
+  const prefix = pad2(floorNum);
+  const flats = [];
+  if(t.tower_type === 'normal'){
+    for(let k=1;k<=t.flats_per_floor;k++) flats.push(prefix+pad2(k));
+  } else {
+    const total = t.cores * t.flats_per_core;
+    for(let k=1;k<=total;k++) flats.push(prefix+pad2(k));
+  }
+  return flats;
+}
+function findTowerFloorForFlat(flatNumber){
+  // returns list of {tower, floor} that could match this flat number (ambiguous across towers)
+  const matches = [];
+  for(const t of state.towers){
+    const floors = buildFloors(t);
+    for(const f of floors){
+      const flats = buildFlats(t, f);
+      if(flats.includes(flatNumber)) matches.push({tower:t.tower_code, floor:f});
+    }
+  }
+  return matches;
+}
+
+function toast(msg, type){
+  type = type || 'info';
+  const colors = { info:'bg-slate-800', success:'bg-emerald-600', error:'bg-rose-600' };
+  const box = document.createElement('div');
+  box.className = 'fade-in text-white text-sm px-4 py-2.5 rounded-xl shadow-lg '+(colors[type]||colors.info);
+  box.textContent = msg;
+  document.getElementById('toast-container').appendChild(box);
+  setTimeout(()=>{ box.style.transition='opacity .3s'; box.style.opacity='0'; setTimeout(()=>box.remove(),300); }, 2000);
+}
+
+function confirmDialog(message, onYes, opts){
+  opts = opts || {};
+  const root = document.getElementById('modal-root');
+  root.innerHTML = `
+    <div class="fixed inset-0 bg-black/40 z-[90] flex items-end sm:items-center justify-center" onclick="closeModal(event)">
+      <div class="bg-white w-full max-w-md rounded-t-2xl sm:rounded-2xl p-5 fade-in" onclick="event.stopPropagation()">
+        <div class="flex items-start gap-3 mb-3">
+          <div class="w-10 h-10 rounded-full bg-rose-50 text-rose-600 flex items-center justify-center shrink-0">${icon('warning','w-5 h-5')}</div>
+          <div>
+            <p class="font-semibold text-slate-900">${opts.title||'पुष्टि करें'}</p>
+            <p class="text-sm text-slate-500 mt-1">${message}</p>
+          </div>
+        </div>
+        <div class="flex gap-2 mt-4">
+          <button class="flex-1 py-2.5 rounded-xl bg-gray-100 text-slate-700 font-medium" onclick="closeModal()">Cancel</button>
+          <button id="confirm-yes-btn" class="flex-1 py-2.5 rounded-xl bg-rose-600 text-white font-medium">${opts.yesLabel||'हाँ, करें'}</button>
+        </div>
+      </div>
+    </div>`;
+  document.getElementById('confirm-yes-btn').onclick = ()=>{ closeModal(); onYes(); };
+}
+function closeModal(e){
+  if(e && e.target !== e.currentTarget) return;
+  document.getElementById('modal-root').innerHTML = '';
+}
+
+function setPage(p){ state.page = p; state.showMoreSheet=false; window.scrollTo(0,0); render(); loadDataForPage(p); }
+
+/* ============================================================
+   AUTH
+============================================================ */
+async function initAuth(){
+  if(!supabaseClient){ state.loading=false; state.page='config'; render(); return; }
+  try {
+    const { data, error } = await supabaseClient.auth.getSession();
+    if(error) console.warn('getSession:', error);
+    state.session = data && data.session ? data.session : null;
+    supabaseClient.auth.onAuthStateChange((event, session)=>{
+      state.session = session;
+      if(!session){ state.profile=null; state.permissions=new Set(); state.page='login'; state.loading=false; render(); }
+    });
+    if(state.session){ await loadUserData(); return; }
+  } catch(e) {
+    console.warn('Auth initialization:', e);
+  }
+  state.loading=false;
+  try{ state.page = localStorage.getItem('svm_onboarded') ? 'login' : 'onboarding'; }catch(e){ state.page='login'; }
+  render();
+}
+function finishOnboarding(){
+  try{ localStorage.setItem('svm_onboarded','1'); }catch(e){}
+  state.page='login'; render();
+}
+
+function normalizeMobile(mobile){
+  let digits = (mobile||'').replace(/\D/g,'');
+  // Accept +91XXXXXXXXXX / 91XXXXXXXXXX as well as a plain 10-digit number.
+  if(digits.length > 10 && digits.startsWith('91')) digits = digits.slice(-10);
+  return digits;
+}
+function mobileToSyntheticEmail(mobile){
+  const digits = normalizeMobile(mobile);
+  return digits + '@guard.svm.local';
+}
+function authFailureMessage(error, fallback){
+  const raw = (error && (error.message || error.error_description || error.msg)) || '';
+  const text = String(raw);
+  if(/failed to fetch|network|load failed|fetch/i.test(text)) {
+    return 'Internet connection या server से connection नहीं हो रहा। Internet चालू करके फिर Login करें।';
+  }
+  if(/invalid login credentials|invalid credentials/i.test(text)) {
+    return 'Login details ग़लत हैं। Mobile/Email और Password जाँचें।';
+  }
+  return text || fallback;
+}
+async function doLogin(email, password){
+  email = (email||'').trim().toLowerCase();
+  if(!email || !password){ state.authError='Email और Password भरें'; render(); return; }
+  if(!supabaseClient){ state.authError='Server configuration उपलब्ध नहीं है'; render(); return; }
+  state.loading=true; state.authError=''; state.authMsg=''; render();
+  try {
+    const { data, error } = await supabaseClient.auth.signInWithPassword({ email, password });
+    if(error){ state.loading=false; state.authError=authFailureMessage(error,'Email या Password ग़लत है'); render(); return; }
+    if(!data || !data.session){ state.loading=false; state.authError='Login session नहीं बन सका। फिर से प्रयास करें।'; render(); return; }
+    state.session = data.session;
+    await loadUserData();
+  } catch(e) {
+    state.loading=false; state.authError=authFailureMessage(e,'Login नहीं हो पाया।'); render();
+  }
+}
+async function doMobileLogin(mobile, password){
+  const normalized = normalizeMobile(mobile);
+  if(normalized.length !== 10 || !password){ state.authError='10 अंकों का Mobile Number और Password भरें'; render(); return; }
+  if(!supabaseClient){ state.authError='Server configuration उपलब्ध नहीं है'; render(); return; }
+  state.loading=true; state.authError=''; state.authMsg=''; render();
+  try {
+    const email = mobileToSyntheticEmail(normalized);
+    const { data, error } = await supabaseClient.auth.signInWithPassword({ email, password });
+    if(error){ state.loading=false; state.authError=authFailureMessage(error,'Mobile Number या Password ग़लत है'); render(); return; }
+    if(!data || !data.session){ state.loading=false; state.authError='Login session नहीं बन सका। फिर से प्रयास करें।'; render(); return; }
+    state.session = data.session;
+    await loadUserData();
+  } catch(e) {
+    state.loading=false; state.authError=authFailureMessage(e,'Login नहीं हो पाया।'); render();
+  }
+}
+async function doRegister(name, email, password, confirm){
+  state.authError='';
+  if(!name || !email || !password){ state.authError='सभी फ़ील्ड भरें'; render(); return; }
+  if(password.length < 6){ state.authError='Password कम से कम 6 अक्षर का हो'; render(); return; }
+  if(password !== confirm){ state.authError='Password मेल नहीं खाता'; render(); return; }
+  state.loading=true; render();
+  const { data, error } = await supabaseClient.auth.signUp({ email, password, options:{ data:{ name } } });
+  state.loading=false;
+  if(error){ state.authError = error.message; render(); return; }
+  if(data.session){ state.session = data.session; await loadUserData(); }
+  else { state.authMsg='Account बन गया! कृपया अपना email verify करें, फिर login करें।'; state.page='login'; render(); }
+}
+async function doForgot(email){
+  if(!email){ state.authError='Email भरें'; render(); return; }
+  state.loading=true; state.authError=''; render();
+  const { error } = await supabaseClient.auth.resetPasswordForEmail(email);
+  state.loading=false;
+  if(error){ state.authError = error.message; render(); return; }
+  state.authMsg='Password reset link आपके email पर भेज दिया गया है।';
+  state.page='login'; render();
+}
+function openForgotWhatsapp(){
+  supabaseClient.from('society_settings').select('admin_whatsapp').limit(1).maybeSingle().then(({data})=>{
+    const num = data && data.admin_whatsapp ? data.admin_whatsapp.replace(/[^0-9]/g,'') : '';
+    const msg = encodeURIComponent('मेरा Password भूल गया हूँ। कृपया मेरा Login Password Reset कर दें।');
+    if(!num){ toast('Admin का WhatsApp Number अभी set नहीं है। कृपया सीधे Admin से संपर्क करें।','error'); return; }
+    window.open('https://wa.me/'+num+'?text='+msg, '_blank');
+  });
+}
+function openSupportWhatsapp(){
+  const num = state.adminWhatsapp ? state.adminWhatsapp.replace(/[^0-9]/g,'') : '';
+  const msg = encodeURIComponent('नमस्ते, मुझे Society Vehicle Manager app में मदद चाहिए।');
+  if(!num){ toast('Admin का WhatsApp Number अभी set नहीं है।','error'); return; }
+  window.open('https://wa.me/'+num+'?text='+msg, '_blank');
+}
+async function doLogout(){
+  await supabaseClient.auth.signOut();
+  state.profile=null; state.permissions=new Set(); state.page='login';
+  render();
+}
+
+async function loadUserData(){
+  state.loading = true; render();
+  try{
+    const uid = state.session.user.id;
+    let { data: profile } = await supabaseClient.from('profiles').select('*, roles(name)').eq('id', uid).single();
+    if(!profile){
+      // profile row might not exist yet (trigger race) - create minimal
+      await supabaseClient.from('profiles').insert({ id: uid, email: state.session.user.email, name: state.session.user.email.split('@')[0] });
+      const r = await supabaseClient.from('profiles').select('*, roles(name)').eq('id', uid).single();
+      profile = r.data;
+    }
+    state.profile = profile;
+    await loadPermissions();
+    await loadTowerSettings();
+    await loadDutyPosts();
+    await loadSocietySettings();
+    await loadBroadcastAlerts();
+    subscribeRealtime();
+    if(state.profile.approval_status === 'rejected'){
+      state.page = 'accessRejected';
+    } else if(state.profile.must_change_password){
+      state.page = 'forcePasswordChange';
+    } else if(state.profile.approval_status !== 'approved' && !(state.profile.roles && state.profile.roles.name==='super_admin')){
+      state.page = 'pendingApproval';
+    } else {
+      state.page = 'dashboard';
+    }
+  } catch(e){
+    console.error(e);
+    toast('Data load करने में समस्या: '+e.message, 'error');
+  }
+  state.loading = false;
+  render();
+  if(state.page==='dashboard') loadDataForPage('dashboard');
+}
+
+async function loadPermissions(){
+  state.permissions = new Set();
+  if(!state.profile || !state.profile.role_id) return;
+  if(state.profile.roles && state.profile.roles.name === 'super_admin'){
+    ALL_PERMISSIONS.forEach(p=>state.permissions.add(p));
+    return;
+  }
+  const { data: rolePerms } = await supabaseClient
+    .from('role_permissions').select('permissions(key)').eq('role_id', state.profile.role_id);
+  (rolePerms||[]).forEach(r=>{ if(r.permissions) state.permissions.add(r.permissions.key); });
+
+  const { data: overrides } = await supabaseClient
+    .from('user_permissions').select('permission_key, allowed').eq('user_id', state.profile.id);
+  (overrides||[]).forEach(o=>{ if(o.allowed) state.permissions.add(o.permission_key); else state.permissions.delete(o.permission_key); });
+}
+
+async function loadTowerSettings(){
+  const { data, error } = await supabaseClient.from('tower_settings').select('*');
+  if(!error && data && data.length){ state.towers = data; }
+}
+async function loadDutyPosts(){
+  const { data, error } = await supabaseClient.from('duty_posts').select('*').order('name');
+  if(!error){ state.dutyPosts = data || []; state.dutyPostsLoaded = true; }
+}
+function isRealTower(code){
+  return state.towers.some(t=>t.tower_code===code);
+}
+function dutyPostLabel(code){
+  if(!code) return '';
+  return isRealTower(code) ? ('Tower '+code) : code;
+}
+async function loadSocietySettings(){
+  const { data } = await supabaseClient.from('society_settings').select('*').limit(1).maybeSingle();
+  if(data){ state.societyName = data.society_name; state.adminWhatsapp = data.admin_whatsapp || ''; }
+}
+
+function subscribeRealtime(){
+  supabaseClient.channel('vehicles-realtime')
+    .on('postgres_changes', { event:'*', schema:'public', table:'vehicles' }, ()=>{ 
+      loadVehicles().then(render);
+    })
+    .subscribe();
+  supabaseClient.channel('problems-realtime')
+    .on('postgres_changes', { event:'*', schema:'public', table:'vehicle_problems' }, ()=>{
+      loadProblems().then(render);
+    })
+    .subscribe();
+  supabaseClient.channel('alerts-realtime')
+    .on('postgres_changes', { event:'*', schema:'public', table:'vehicle_alerts' }, (payload)=>{
+      const wasNewInsert = payload.eventType === 'INSERT';
+      loadAlerts().then(()=>{
+        render();
+        if(wasNewInsert && payload.new && payload.new.reporter_id !== state.profile.id){
+          toast('नई Alert आई है: '+payload.new.vehicle_number, 'error');
+        }
+      });
+    })
+    .subscribe();
+  supabaseClient.channel('duty-sessions-realtime')
+    .on('postgres_changes', { event:'*', schema:'public', table:'duty_sessions' }, (payload)=>{
+      const row = payload.new || payload.old;
+      if(state.page==='attendance' && row && row.guard_id === (state.attendanceGuardId || state.profile.id)){
+        loadAttendance();
+        if(row.guard_id === state.profile.id && payload.eventType !== 'INSERT'){
+          toast('Admin ने आपकी Attendance में बदलाव किया है','info');
+        }
+      }
+    })
+    .subscribe();
+  supabaseClient.channel('broadcast-alerts-realtime')
+    .on('postgres_changes', { event:'*', schema:'public', table:'broadcast_alerts' }, (payload)=>{
+      const wasNewInsert = payload.eventType === 'INSERT';
+      loadBroadcastAlerts().then(()=>{
+        render();
+        if(wasNewInsert && payload.new && payload.new.raised_by !== state.profile.id){
+          toast('🚨 '+payload.new.message, 'error');
+        }
+      });
+    })
+    .subscribe();
+}
+
+function loadDataForPage(p){
+  if(p==='dashboard'){ loadVehicles(); loadProblems(); loadAlerts(); loadUsers(); if(isAdminRole()) loadApprovalsData(); }
+  if(p==='vehicles') loadVehicles();
+  if(p==='problems') loadProblems();
+  if(p==='users') loadUsers();
+  if(p==='alerts') loadAlerts();
+  if(p==='approvals') loadApprovalsData();
+  if(p==='attendance') loadAttendance();
+  if(p==='settings') loadDutyPosts().then(render);
+}
+
+/* ============================================================
+   VEHICLES
+============================================================ */
+async function loadBroadcastAlerts(){
+  const { data, error } = await supabaseClient.from('broadcast_alerts').select('*').eq('status','active').order('started_at',{ascending:false});
+  if(!error){ state.broadcastAlerts = data || []; state.broadcastAlertsLoaded = true; }
+}
+function openBroadcastAlertModal(){
+  const root = document.getElementById('modal-root');
+  root.innerHTML = `
+    <div class="fixed inset-0 bg-black/40 z-[90] flex items-end sm:items-center justify-center" onclick="if(event.target===event.currentTarget)document.getElementById('modal-root').innerHTML=''">
+      <div class="bg-white w-full max-w-md rounded-t-2xl sm:rounded-2xl p-5 fade-in">
+        <div class="flex items-start gap-3 mb-3">
+          <div class="w-10 h-10 rounded-full bg-rose-50 text-rose-600 flex items-center justify-center shrink-0">${icon('warning','w-5 h-5')}</div>
+          <div>
+            <p class="font-semibold text-slate-900">सभी Guards को Alert भेजें</p>
+            <p class="text-sm text-slate-500 mt-1">यह तुरंत हर guard के फ़ोन पर पहुंचेगा</p>
+          </div>
+        </div>
+        <div class="flex gap-2 mb-3" id="bcast-severity">
+          <button data-sev="normal" onclick="selectBcastSeverity('normal')" class="bcast-sev-btn flex-1 py-2 rounded-xl text-xs font-semibold border bg-white border-gray-200 text-slate-500">सामान्य</button>
+          <button data-sev="urgent" onclick="selectBcastSeverity('urgent')" class="bcast-sev-btn flex-1 py-2 rounded-xl text-xs font-semibold border bg-amber-500 border-amber-500 text-white">ज़रूरी</button>
+          <button data-sev="emergency" onclick="selectBcastSeverity('emergency')" class="bcast-sev-btn flex-1 py-2 rounded-xl text-xs font-semibold border bg-white border-gray-200 text-slate-500">आपातकाल</button>
+        </div>
+        <textarea id="bcast-message" rows="3" placeholder="Message लिखें (जैसे: Fire alarm बज रहा है, सभी सतर्क रहें)" class="w-full px-3 py-3 rounded-xl border border-gray-200 bg-white text-sm"></textarea>
+        <div class="flex gap-2 mt-4">
+          <button class="flex-1 py-2.5 rounded-xl bg-gray-100 text-slate-700 font-medium text-sm" onclick="document.getElementById('modal-root').innerHTML=''">Cancel</button>
+          <button class="flex-1 py-2.5 rounded-xl bg-rose-600 text-white font-semibold text-sm" onclick="submitBroadcastAlert()">🚨 भेजें</button>
+        </div>
+      </div>
+    </div>`;
+}
+function selectBcastSeverity(sev){
+  state.bcastSeverity = sev;
+  document.querySelectorAll('.bcast-sev-btn').forEach(b=>{
+    const on = b.dataset.sev === sev;
+    b.className = 'bcast-sev-btn flex-1 py-2 rounded-xl text-xs font-semibold border ' + (on ? (sev==='emergency'?'bg-rose-600 border-rose-600 text-white':sev==='urgent'?'bg-amber-500 border-amber-500 text-white':'bg-slate-600 border-slate-600 text-white') : 'bg-white border-gray-200 text-slate-500');
+  });
+}
+async function submitBroadcastAlert(){
+  const message = document.getElementById('bcast-message').value.trim();
+  if(!message){ toast('Message लिखें','error'); return; }
+  const severity = state.bcastSeverity || 'urgent';
+  const { error } = await supabaseClient.from('broadcast_alerts').insert({
+    message, severity, raised_by: state.profile.id, raised_by_name: state.profile.name
+  });
+  document.getElementById('modal-root').innerHTML = '';
+  if(error){ toast(error.message,'error'); return; }
+  toast('Alert सभी guards को भेज दी गई','success');
+  await loadBroadcastAlerts();
+  render();
+}
+async function closeBroadcastAlert(id){
+  const { error } = await supabaseClient.from('broadcast_alerts').update({ status:'closed', closed_at: new Date().toISOString(), closed_by: state.profile.id }).eq('id', id);
+  if(error){ toast(error.message,'error'); return; }
+  toast('Alert बंद कर दी गई','info');
+  await loadBroadcastAlerts();
+  render();
+}
+function bcastElapsed(startIso){
+  const mins = Math.max(0, Math.round((new Date() - new Date(startIso))/60000));
+  if(mins < 1) return 'अभी-अभी';
+  if(mins < 60) return mins+' मिनट से चालू';
+  return Math.floor(mins/60)+'घं '+(mins%60)+'मि से चालू';
+}
+function broadcastBannerHtml(){
+  if(!state.broadcastAlerts.length) return '';
+  const sevStyle = { normal:'bg-slate-700', urgent:'bg-amber-600', emergency:'bg-rose-600' };
+  return state.broadcastAlerts.map(a => `
+    <div class="${sevStyle[a.severity]||'bg-rose-600'} text-white px-4 py-2.5">
+      <div class="flex items-start gap-2">
+        <span class="mt-0.5">${icon('warning','w-4 h-4 shrink-0')}</span>
+        <div class="flex-1 min-w-0">
+          <p class="text-sm font-semibold leading-snug">${a.message}</p>
+          <p class="text-[10px] opacity-80 mt-0.5">${a.raised_by_name||'Guard'} • <span class="bcast-timer" data-start="${a.started_at}">${bcastElapsed(a.started_at)}</span></p>
+        </div>
+        ${(a.raised_by===state.profile.id || hasPerm('manage_users')) ? `<button onclick="closeBroadcastAlert('${a.id}')" class="text-[10px] font-bold bg-white/20 px-2.5 py-1.5 rounded-lg shrink-0">बंद करें</button>` : ''}
+      </div>
+    </div>
+  `).join('');
+}
+setInterval(()=>{
+  document.querySelectorAll('.bcast-timer').forEach(el=>{
+    el.textContent = bcastElapsed(el.dataset.start);
+  });
+}, 30000);
+
+async function loadVehicles(){
+  const { data, error } = await supabaseClient.from('vehicles').select('*').order('created_at',{ascending:false});
+  if(!error){ state.vehicles = data || []; state.vehiclesLoaded = true; render(); }
+}
+async function loadProblems(){
+  const { data, error } = await supabaseClient.from('vehicle_problems').select('*').order('created_at',{ascending:false});
+  if(!error){ state.problems = data || []; state.problemsLoaded = true; render(); }
+}
+async function loadUsers(){
+  const { data, error } = await supabaseClient.from('profiles').select('*, roles(name)').order('created_at',{ascending:false});
+  if(!error){ state.users = data || []; state.usersLoaded = true; render(); }
+}
+async function loadAlerts(){
+  const { data, error } = await supabaseClient.from('vehicle_alerts').select('*').order('created_at',{ascending:false});
+  if(!error){ state.alerts = data || []; state.alertsLoaded = true; render(); }
+}
+function openSendAlert(vehicleId){
+  const v = state.vehicles.find(x=>x.id===vehicleId);
+  if(!v) return;
+  if(!state.profile.tower){ toast('पहले अपनी Profile में अपनी Tower सेट करें','error'); return; }
+  state.sendAlertVehicleId = vehicleId;
+  state.alertMessage = '';
+  const root = document.getElementById('modal-root');
+  root.innerHTML = `
+    <div class="fixed inset-0 bg-black/40 z-[90] flex items-end sm:items-center justify-center" onclick="if(event.target===event.currentTarget)document.getElementById('modal-root').innerHTML=''">
+      <div class="bg-white w-full max-w-md rounded-t-2xl sm:rounded-2xl p-5 fade-in">
+        <div class="flex items-start gap-3 mb-3">
+          <div class="w-10 h-10 rounded-full bg-amber-50 text-amber-600 flex items-center justify-center shrink-0">${icon('warning','w-5 h-5')}</div>
+          <div>
+            <p class="font-semibold text-slate-900">Tower ${v.tower} के Guard को Alert भेजें</p>
+            <p class="text-sm text-slate-500 mt-1">${v.vehicle_number} — यह गाड़ी Tower ${state.profile.tower} में मिली है</p>
+          </div>
+        </div>
+        <textarea id="alert-message-input" rows="3" placeholder="Message (जैसे: यह गाड़ी हमारी Visitor Parking में खड़ी है)" class="w-full px-3 py-3 rounded-xl border border-gray-200 bg-white text-sm"></textarea>
+        <div class="flex gap-2 mt-4">
+          <button class="flex-1 py-2.5 rounded-xl bg-gray-100 text-slate-700 font-medium" onclick="document.getElementById('modal-root').innerHTML=''">Cancel</button>
+          <button class="flex-1 py-2.5 rounded-xl bg-blue-600 text-white font-medium" onclick="sendVehicleAlert()">Alert भेजें</button>
+        </div>
+      </div>
+    </div>`;
+}
+async function sendVehicleAlert(){
+  const v = state.vehicles.find(x=>x.id===state.sendAlertVehicleId);
+  if(!v) return;
+  const message = (document.getElementById('alert-message-input')||{}).value || '';
+  const { error } = await supabaseClient.from('vehicle_alerts').insert({
+    vehicle_id: v.id, vehicle_number: v.vehicle_number, registered_tower: v.tower, found_tower: state.profile.tower,
+    message: message || null, reporter_id: state.profile.id, reporter_name: state.profile.name, reporter_mobile: state.profile.mobile
+  });
+  document.getElementById('modal-root').innerHTML = '';
+  if(error){ toast(error.message,'error'); return; }
+  toast('Tower '+v.tower+' के Guard को Alert भेज दी गई','success');
+  await loadAlerts();
+}
+async function loadAttendance(){
+  const guardId = state.attendanceGuardId || state.profile.id;
+  const since = new Date();
+  since.setMonth(since.getMonth() - 6);
+  const { data, error } = await supabaseClient.from('duty_sessions').select('*').eq('guard_id', guardId).gte('start_time', since.toISOString()).order('start_time', { ascending:false });
+  if(!error){ state.attendance = data || []; state.attendanceLoaded = true; render(); }
+}
+function openMyAttendance(){
+  if(state.attendanceGuardId !== state.profile.id){ state.attendanceOpenMonth = undefined; }
+  state.attendanceGuardId = state.profile.id;
+  state.attendanceGuardName = '';
+  state.attendanceLoaded = false;
+  setPage('attendance');
+}
+function openGuardAttendance(guardId, guardName){
+  if(state.attendanceGuardId !== guardId){ state.attendanceOpenMonth = undefined; }
+  state.attendanceGuardId = guardId;
+  state.attendanceGuardName = guardName;
+  state.attendanceLoaded = false;
+  setPage('attendance');
+}
+function generateTempPassword(){
+  const words = ['Guard','Secure','Society','Tower','Gate','Duty','Watch','Safe'];
+  const w = words[Math.floor(Math.random()*words.length)];
+  const num = Math.floor(1000 + Math.random()*9000);
+  return w + num;
+}
+function openAddGuardModal(){
+  const tempPass = generateTempPassword();
+  const root = document.getElementById('modal-root');
+  root.innerHTML = `
+    <div class="fixed inset-0 bg-black/40 z-[90] flex items-end sm:items-center justify-center" onclick="if(event.target===event.currentTarget)document.getElementById('modal-root').innerHTML=''">
+      <div class="bg-white w-full max-w-md rounded-t-2xl sm:rounded-2xl p-5 fade-in">
+        <p class="font-semibold text-slate-900 mb-3">नया Guard Account बनाएं</p>
+        <div class="space-y-3">
+          <input id="ag-name" placeholder="Guard का नाम" class="w-full px-3 py-3 rounded-xl border border-gray-200 bg-white text-sm">
+          <input id="ag-mobile" type="tel" placeholder="Mobile Number" class="w-full px-3 py-3 rounded-xl border border-gray-200 bg-white text-sm">
+          <div>
+            <label class="text-xs font-semibold text-slate-500">Temporary Password</label>
+            <input id="ag-password" value="${tempPass}" class="w-full mt-1 px-3 py-3 rounded-xl border border-gray-200 bg-white text-sm font-mono">
+          </div>
+        </div>
+        <div class="flex gap-2 mt-4">
+          <button class="flex-1 py-2.5 rounded-xl bg-gray-100 text-slate-700 font-medium text-sm" onclick="document.getElementById('modal-root').innerHTML=''">Cancel</button>
+          <button class="flex-1 py-2.5 rounded-xl bg-blue-600 text-white font-semibold text-sm" onclick="submitAddGuard()">Account बनाएं</button>
+        </div>
+      </div>
+    </div>`;
+}
+async function submitAddGuard(){
+  const name = document.getElementById('ag-name').value.trim();
+  const mobile = document.getElementById('ag-mobile').value.trim();
+  const password = document.getElementById('ag-password').value;
+  if(!name || !mobile || !password){ toast('सभी फ़ील्ड भरें','error'); return; }
+  const { data: { session } } = await supabaseClient.auth.getSession();
+  const { data, error } = await supabaseClient.functions.invoke('admin-users', {
+    body: { action:'create', mobile, name, password },
+    headers: { Authorization: 'Bearer '+session.access_token }
+  });
+  if(error || (data && data.error)){ toast((data&&data.error)||error.message,'error'); return; }
+  document.getElementById('modal-root').innerHTML = '';
+  showCredentialsModal(mobile, password, name);
+  await loadUsers();
+}
+function showCredentialsModal(mobile, password, name){
+  const msg = encodeURIComponent('आपका Society Vehicle Manager Login:\nMobile: '+mobile+'\nTemporary Password: '+password+'\n\nपहली बार Login करते ही नया Password बनाना होगा।');
+  const root = document.getElementById('modal-root');
+  root.innerHTML = `
+    <div class="fixed inset-0 bg-black/40 z-[90] flex items-end sm:items-center justify-center" onclick="if(event.target===event.currentTarget)document.getElementById('modal-root').innerHTML=''">
+      <div class="bg-white w-full max-w-md rounded-t-2xl sm:rounded-2xl p-5 fade-in text-center">
+        <div class="w-12 h-12 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center mx-auto mb-3">${icon('check','w-6 h-6')}</div>
+        <p class="font-semibold text-slate-900">Account बन गया — ${name}</p>
+        <div class="bg-gray-50 rounded-xl p-4 mt-3 text-left">
+          <p class="text-xs text-slate-400">Mobile</p><p class="font-mono font-semibold text-slate-800 mb-2">${mobile}</p>
+          <p class="text-xs text-slate-400">Temporary Password</p><p class="font-mono font-semibold text-slate-800">${password}</p>
+        </div>
+        <a href="https://wa.me/?text=${msg}" target="_blank" class="mt-4 w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-emerald-600 text-white font-semibold text-sm">WhatsApp पर भेजें</a>
+        <button class="w-full mt-2 py-2.5 rounded-xl bg-gray-100 text-slate-700 font-medium text-sm" onclick="document.getElementById('modal-root').innerHTML=''">Done</button>
+      </div>
+    </div>`;
+}
+function openResetPasswordModal(userId, mobile, name){
+  const newPass = generateTempPassword();
+  const root = document.getElementById('modal-root');
+  root.innerHTML = `
+    <div class="fixed inset-0 bg-black/40 z-[90] flex items-end sm:items-center justify-center" onclick="if(event.target===event.currentTarget)document.getElementById('modal-root').innerHTML=''">
+      <div class="bg-white w-full max-w-md rounded-t-2xl sm:rounded-2xl p-5 fade-in">
+        <p class="font-semibold text-slate-900 mb-3">${name} का Password Reset करें</p>
+        <label class="text-xs font-semibold text-slate-500">नया Temporary Password</label>
+        <input id="rp-password" value="${newPass}" class="w-full mt-1 px-3 py-3 rounded-xl border border-gray-200 bg-white text-sm font-mono">
+        <div class="flex gap-2 mt-4">
+          <button class="flex-1 py-2.5 rounded-xl bg-gray-100 text-slate-700 font-medium text-sm" onclick="document.getElementById('modal-root').innerHTML=''">Cancel</button>
+          <button class="flex-1 py-2.5 rounded-xl bg-blue-600 text-white font-semibold text-sm" onclick="submitResetPassword('${userId}','${mobile}','${name}')">Reset करें</button>
+        </div>
+      </div>
+    </div>`;
+}
+async function submitResetPassword(userId, mobile, name){
+  const password = document.getElementById('rp-password').value;
+  if(!password || password.length<6){ toast('Password कम से कम 6 अक्षर का हो','error'); return; }
+  const { data: { session } } = await supabaseClient.auth.getSession();
+  const { data, error } = await supabaseClient.functions.invoke('admin-users', {
+    body: { action:'reset_password', userId, password },
+    headers: { Authorization: 'Bearer '+session.access_token }
+  });
+  if(error || (data && data.error)){ toast((data&&data.error)||error.message,'error'); return; }
+  document.getElementById('modal-root').innerHTML = '';
+  showCredentialsModal(mobile, password, name);
+}
+async function loadApprovalsData(){
+  const { data: guards } = await supabaseClient.from('profiles').select('*, roles(name)').eq('approval_status','pending').order('created_at',{ascending:false});
+  state.pendingGuards = guards || [];
+  const { data: reqs } = await supabaseClient.from('vehicle_change_requests').select('*').order('created_at',{ascending:false});
+  state.vehicleRequests = reqs || [];
+  state.approvalsLoaded = true;
+  render();
+}
+async function approveGuard(id){
+  const { error } = await supabaseClient.from('profiles').update({ approval_status:'approved' }).eq('id', id);
+  if(error){ toast(error.message,'error'); return; }
+  toast('Guard approve कर दिया गया','success');
+  await loadApprovalsData();
+}
+async function rejectGuard(id){
+  confirmDialog('इस Guard का account reject करना चाहते हैं? यह app इस्तेमाल नहीं कर पाएगा।', async ()=>{
+    const { error } = await supabaseClient.from('profiles').update({ approval_status:'rejected' }).eq('id', id);
+    if(error){ toast(error.message,'error'); return; }
+    toast('Guard reject कर दिया गया','info');
+    await loadApprovalsData();
+  });
+}
+async function approveVehicleRequest(id){
+  const r = state.vehicleRequests.find(x=>x.id===id);
+  if(!r) return;
+  let opError = null;
+  if(r.action === 'add'){
+    const dup = await checkDuplicate(r.payload.vehicle_number);
+    if(dup){ toast('यह Vehicle Number अब पहले से मौजूद है — Reject करें','error'); return; }
+    const { error } = await supabaseClient.from('vehicles').insert({ ...r.payload, created_by: r.requested_by });
+    opError = error;
+  } else if(r.action === 'edit'){
+    const dup = await checkDuplicate(r.payload.vehicle_number, r.vehicle_id);
+    if(dup){ toast('यह Vehicle Number अब किसी और record में है — Reject करें','error'); return; }
+    const { error } = await supabaseClient.from('vehicles').update({ ...r.payload, updated_at: new Date().toISOString() }).eq('id', r.vehicle_id);
+    opError = error;
+  } else if(r.action === 'delete'){
+    const { error } = await supabaseClient.from('vehicles').delete().eq('id', r.vehicle_id);
+    opError = error;
+  }
+  if(opError){ toast(opError.message,'error'); return; }
+  await supabaseClient.from('vehicle_change_requests').update({ status:'approved', reviewed_by: state.profile.id, reviewed_at: new Date().toISOString() }).eq('id', id);
+  toast('बदलाव approve करके लागू कर दिया गया','success');
+  await loadApprovalsData();
+  await loadVehicles();
+}
+async function rejectVehicleRequest(id){
+  confirmDialog('इस बदलाव को reject करना चाहते हैं?', async ()=>{
+    await supabaseClient.from('vehicle_change_requests').update({ status:'rejected', reviewed_by: state.profile.id, reviewed_at: new Date().toISOString() }).eq('id', id);
+    toast('बदलाव reject कर दिया गया','info');
+    await loadApprovalsData();
+  });
+}
+async function resolveAlert(id){
+  const { error } = await supabaseClient.from('vehicle_alerts').update({ status:'resolved', resolved_at: new Date().toISOString() }).eq('id', id);
+  if(error){ toast(error.message,'error'); return; }
+  toast('Alert resolve कर दी गई','success');
+  await loadAlerts(); render();
+}
+
+async function checkDuplicate(vehicleNumber, excludeId){
+  let q = supabaseClient.from('vehicles').select('id').eq('vehicle_number', vehicleNumber);
+  if(excludeId) q = q.neq('id', excludeId);
+  const { data } = await q.maybeSingle();
+  return !!data;
+}
+
+async function submitAddVehicle(){
+  const f = state.addVehicle;
+  if(!f.tower || !f.floor || !f.flat){ toast('Tower, Floor, Flat चुनें','error'); return; }
+  const vnum = normalizeVehicleNumber(f.vehicle_number);
+  if(!vnum){ toast('Vehicle Number भरें','error'); return; }
+  const payload = {
+    vehicle_number: vnum, tower: f.tower, floor: f.floor, flat: f.flat, vehicle_type: f.vehicle_type || 'car',
+    parking_number: f.parking_number || null, notes: f.notes || null
+  };
+  if(!isAdminRole()){
+    const { error } = await supabaseClient.from('vehicle_change_requests').insert({
+      action:'add', payload, requested_by: state.profile.id, requested_by_name: state.profile.name
+    });
+    if(error){ toast(error.message,'error'); return; }
+    toast('Admin approval के लिए भेज दिया गया','success');
+    state.addVehicle = { tower:'', floor:'', flat:'', vehicle_number:'', vehicle_type:'car', parking_number:'', notes:'' };
+    setPage('vehicles');
+    return;
+  }
+  const dup = await checkDuplicate(vnum);
+  if(dup){
+    await supabaseClient.from('vehicle_problems').insert({ ...payload, reason:'Duplicate vehicle number', source:'manual' });
+    toast('यह Vehicle पहले से मौजूद है — Problems में भेजा गया','error');
+  } else {
+    const { error } = await supabaseClient.from('vehicles').insert({ ...payload, created_by: state.profile.id });
+    if(error){ toast(error.message,'error'); return; }
+    toast('Vehicle जोड़ा गया','success');
+  }
+  state.addVehicle = { tower:'', floor:'', flat:'', vehicle_number:'', vehicle_type:'car', parking_number:'', notes:'' };
+  await loadVehicles();
+  setPage('vehicles');
+}
+
+function openEditVehicle(id){
+  const v = state.vehicles.find(x=>x.id===id);
+  if(!v) return;
+  state.editingVehicle = id;
+  state.editForm = { ...v };
+  render();
+}
+async function submitEditVehicle(){
+  const f = state.editForm;
+  const vnum = normalizeVehicleNumber(f.vehicle_number);
+  if(!f.tower || !f.floor || !f.flat || !vnum){ toast('सभी ज़रूरी फ़ील्ड भरें','error'); return; }
+  const payload = {
+    vehicle_number: vnum, tower:f.tower, floor:f.floor, flat:f.flat, vehicle_type: f.vehicle_type||'car',
+    parking_number:f.parking_number||null, notes:f.notes||null
+  };
+  if(!isAdminRole()){
+    const original = state.vehicles.find(x=>x.id===f.id);
+    const { error } = await supabaseClient.from('vehicle_change_requests').insert({
+      action:'edit', vehicle_id: f.id, payload, previous_data: original || null,
+      requested_by: state.profile.id, requested_by_name: state.profile.name
+    });
+    if(error){ toast(error.message,'error'); return; }
+    toast('बदलाव Admin approval के लिए भेज दिया गया','success');
+    state.editingVehicle = null; state.editForm = null;
+    setPage('vehicles');
+    return;
+  }
+  const dup = await checkDuplicate(vnum, f.id);
+  if(dup){ toast('यह Vehicle Number किसी और record में पहले से है','error'); return; }
+  const { error } = await supabaseClient.from('vehicles').update({ ...payload, updated_at: new Date().toISOString() }).eq('id', f.id);
+  if(error){ toast(error.message,'error'); return; }
+  toast('Vehicle update हो गया','success');
+  state.editingVehicle = null; state.editForm = null;
+  await loadVehicles(); render();
+}
+function deleteVehicle(id){
+  if(!isAdminRole()){
+    confirmDialog('इस Vehicle को हटाने का request Admin को approval के लिए भेजें?', async ()=>{
+      const original = state.vehicles.find(x=>x.id===id);
+      const { error } = await supabaseClient.from('vehicle_change_requests').insert({
+        action:'delete', vehicle_id: id, previous_data: original || null,
+        requested_by: state.profile.id, requested_by_name: state.profile.name
+      });
+      if(error){ toast(error.message,'error'); return; }
+      toast('Delete request Admin approval के लिए भेज दिया गया','success');
+    }, { yesLabel:'Request भेजें' });
+    return;
+  }
+  confirmDialog('क्या आप यह Vehicle record स्थायी रूप से हटाना चाहते हैं?', async ()=>{
+    const { error } = await supabaseClient.from('vehicles').delete().eq('id', id);
+    if(error){ toast(error.message,'error'); return; }
+    toast('Vehicle हटाया गया','success');
+    await loadVehicles(); render();
+  });
+}
+function deleteProblem(id){
+  confirmDialog('इस Problem record को हटाना चाहते हैं?', async ()=>{
+    const { error } = await supabaseClient.from('vehicle_problems').delete().eq('id', id);
+    if(error){ toast(error.message,'error'); return; }
+    toast('Record हटाया गया','success');
+    await loadProblems(); render();
+  });
+}
+
+function filteredVehicles(){
+  let list = state.vehicles;
+  const f = state.filters;
+  if(f.tower) list = list.filter(v=>v.tower===f.tower);
+  if(f.floor) list = list.filter(v=>v.floor===f.floor);
+  if(f.flat) list = list.filter(v=>v.flat===f.flat);
+  if(state.vehicleTypeFilter) list = list.filter(v=>(v.vehicle_type||'car')===state.vehicleTypeFilter);
+  const q = (state.searchQuery||'').trim().toUpperCase();
+  if(q){
+    list = list.filter(v =>
+      (v.vehicle_number||'').toUpperCase().includes(q) ||
+      (v.flat||'').toUpperCase().includes(q) ||
+      (v.tower||'').toUpperCase().includes(q.replace('TOWER','').trim()) ||
+      ('tower '+v.tower).toUpperCase().includes(q) ||
+      (v.owner_name||'').toUpperCase().includes(q) ||
+      (v.owner_mobile||'').includes(q) ||
+      (v.parking_number||'').toUpperCase().includes(q)
+    );
+  }
+  return list;
+}
+
+/* ============================================================
+   BULK ADD
+============================================================ */
+async function runBulkAdd(){
+  const lines = state.bulkText.split('\n').map(l=>l.trim()).filter(Boolean);
+  const added=[], duplicates=[], invalid=[];
+  const seenInBatch = new Set();
+  for(const line of lines){
+    const parts = line.split(',').map(p=>p.trim());
+    if(parts.length < 4){ invalid.push({line, reason:'गलत format (Tower,Floor,Flat,Vehicle चाहिए)'}); continue; }
+    const [towerRaw, floorRaw, flat, vehicleRaw] = parts;
+    const tower = towerRaw.toUpperCase();
+    const t = getTower(tower);
+    if(!t){ invalid.push({line, reason:'Tower मौजूद नहीं: '+tower}); continue; }
+    const floors = buildFloors(t);
+    const floorNorm = floorRaw.toLowerCase()==='ground' || floorRaw==='0' ? 'Ground' : String(parseInt(floorRaw,10));
+    if(!floors.includes(floorNorm)){ invalid.push({line, reason:'Floor मौजूद नहीं: '+floorRaw}); continue; }
+    const flats = buildFlats(t, floorNorm);
+    if(!flats.includes(flat)){ invalid.push({line, reason:'Flat मौजूद नहीं: '+flat}); continue; }
+    const vnum = normalizeVehicleNumber(vehicleRaw);
+    if(!vnum){ invalid.push({line, reason:'Vehicle number खाली है'}); continue; }
+    if(seenInBatch.has(vnum)){ duplicates.push({line, reason:'Batch में duplicate'}); continue; }
+    const dup = await checkDuplicate(vnum);
+    if(dup){ duplicates.push({line, reason:'Database में पहले से मौजूद'});
+      await supabaseClient.from('vehicle_problems').insert({ vehicle_number:vnum, tower, floor:floorNorm, flat, reason:'Duplicate vehicle number (bulk import)', source:'bulk' });
+      continue;
+    }
+    seenInBatch.add(vnum);
+    added.push({ vehicle_number:vnum, tower, floor:floorNorm, flat, created_by: state.profile.id });
+  }
+  if(added.length){
+    const { error } = await supabaseClient.from('vehicles').insert(added);
+    if(error){ toast('कुछ records save नहीं हो पाए: '+error.message,'error'); }
+  }
+  state.bulkResult = { added: added.length, duplicates: duplicates.length, invalid };
+  await loadVehicles();
+  render();
+}
+
+/* ============================================================
+   PDF IMPORT (heuristic extraction)
+============================================================ */
+async function runPdfImport(file){
+  if(!file) return;
+  state.pdfBusy = true; state.pdfResult = null; render();
+  try{
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+    const buf = await file.arrayBuffer();
+    const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+    let lines = [];
+    for(let p=1; p<=pdf.numPages; p++){
+      const page = await pdf.getPage(p);
+      const content = await page.getTextContent();
+      let currentLine = ''; let lastY = null;
+      content.items.forEach(item=>{
+        const y = item.transform[5];
+        if(lastY !== null && Math.abs(y-lastY) > 3){ lines.push(currentLine); currentLine=''; }
+        currentLine += item.str + ' ';
+        lastY = y;
+      });
+      if(currentLine.trim()) lines.push(currentLine);
+    }
+    const vehicleRegex = /\b[A-Z]{2}\s?-?\s?\d{1,2}\s?-?\s?[A-Z]{1,3}\s?-?\s?\d{4}\b/gi;
+    const flatRegex = /\b\d{3,4}\b/g;
+    const towerRegex = new RegExp('\\bTower\\s*[:\\-]?\\s*('+ALL_TOWER_CODES.join('|')+')\\b','i');
+
+    const added=[], duplicates=[], invalid=[];
+    for(const line of lines){
+      const vMatches = line.match(vehicleRegex);
+      if(!vMatches) continue;
+      for(const vRaw of vMatches){
+        const vnum = normalizeVehicleNumber(vRaw);
+        const flatMatches = line.replace(vRaw,'').match(flatRegex);
+        const towerMatch = line.match(towerRegex);
+        if(!flatMatches || !flatMatches.length){
+          invalid.push({ line, reason:'Flat number नहीं मिला', vehicle:vnum });
+          await supabaseClient.from('vehicle_problems').insert({ vehicle_number:vnum, reason:'PDF: Flat number नहीं मिला', source:'pdf', raw_data:{line} });
+          continue;
+        }
+        const flat = flatMatches[0].length===3 ? '0'+flatMatches[0] : flatMatches[0];
+        let tower = towerMatch ? towerMatch[1].toUpperCase() : null;
+        let floor = null;
+        if(tower){
+          const t = getTower(tower);
+          const floors = t ? buildFloors(t) : [];
+          for(const f of floors){ if(buildFlats(t,f).includes(flat)){ floor = f; break; } }
+        } else {
+          const candidates = findTowerFloorForFlat(flat);
+          if(candidates.length === 1){ tower = candidates[0].tower; floor = candidates[0].floor; }
+        }
+        if(!tower || !floor){
+          invalid.push({ line, reason:'Tower/Floor confirm नहीं हो पाया (flat ambiguous)', vehicle:vnum });
+          await supabaseClient.from('vehicle_problems').insert({ vehicle_number:vnum, flat, reason:'PDF: Tower/Floor स्पष्ट नहीं है', source:'pdf', raw_data:{line} });
+          continue;
+        }
+        const dup = await checkDuplicate(vnum);
+        if(dup){
+          duplicates.push({ line, vehicle:vnum });
+          await supabaseClient.from('vehicle_problems').insert({ vehicle_number:vnum, tower, floor, flat, reason:'Duplicate vehicle number (PDF import)', source:'pdf' });
+          continue;
+        }
+        const { error } = await supabaseClient.from('vehicles').insert({ vehicle_number:vnum, tower, floor, flat, created_by: state.profile.id });
+        if(!error) added.push(vnum);
+      }
+    }
+    state.pdfResult = { added: added.length, duplicates: duplicates.length, invalid };
+    await loadVehicles();
+  } catch(e){
+    console.error(e);
+    toast('PDF पढ़ने में समस्या हुई। कृपया दूसरी PDF try करें।','error');
+    state.pdfResult = { added:0, duplicates:0, invalid:[{line:'-', reason: e.message}] };
+  }
+  state.pdfBusy = false;
+  render();
+}
+
+/* ============================================================
+   CAMERA / OCR SEARCH
+============================================================ */
+let videoStreamRef = null;
+async function startCamera(){
+  state.cameraOn = true; state.cameraResult = null; render();
+  try{
+    videoStreamRef = await navigator.mediaDevices.getUserMedia({ video: { facingMode:'environment' } });
+    const video = document.getElementById('camera-video');
+    if(video){ video.srcObject = videoStreamRef; video.play(); }
+  } catch(e){
+    toast('Camera permission नहीं मिली','error');
+    state.cameraOn = false; render();
+  }
+}
+function stopCamera(){
+  if(videoStreamRef){ videoStreamRef.getTracks().forEach(t=>t.stop()); videoStreamRef=null; }
+  state.cameraOn = false; render();
+}
+async function captureAndScan(){
+  const video = document.getElementById('camera-video');
+  if(!video) return;
+  state.cameraBusy = true; render();
+  const canvas = document.createElement('canvas');
+  canvas.width = video.videoWidth; canvas.height = video.videoHeight;
+  canvas.getContext('2d').drawImage(video,0,0);
+  try{
+    const result = await Tesseract.recognize(canvas, 'eng');
+    const text = result.data.text || '';
+    const match = text.match(/[A-Z0-9]{6,12}/gi);
+    const guess = match ? normalizeVehicleNumber(match.sort((a,b)=>b.length-a.length)[0]) : '';
+    if(!guess){
+      state.cameraResult = { ok:false, text: text.trim(), matches: [] };
+    } else {
+      const { data } = await supabaseClient.from('vehicles').select('*').ilike('vehicle_number', '%'+guess+'%');
+      state.cameraResult = { ok:true, guess, matches: data || [] };
+    }
+  } catch(e){
+    toast('OCR में समस्या हुई','error');
+  }
+  state.cameraBusy = false;
+  render();
+}
+
+/* ============================================================
+   USERS / PERMISSIONS (admin)
+============================================================ */
+async function changeUserRole(userId, roleName){
+  const { data: role } = await supabaseClient.from('roles').select('id').eq('name', roleName).single();
+  if(!role) return;
+  const { error } = await supabaseClient.from('profiles').update({ role_id: role.id }).eq('id', userId);
+  if(error){ toast(error.message,'error'); return; }
+  toast('Role update हो गया','success');
+  await loadUsers(); render();
+}
+async function toggleUserStatus(userId, current){
+  const next = current==='active' ? 'blocked' : 'active';
+  confirmDialog(next==='blocked' ? 'इस user को block करना चाहते हैं?' : 'इस user को active करना चाहते हैं?', async ()=>{
+    const { error } = await supabaseClient.from('profiles').update({ status: next }).eq('id', userId);
+    if(error){ toast(error.message,'error'); return; }
+    toast('Status update हो गया','success');
+    await loadUsers(); render();
+  });
+}
+async function setUserPermission(userId, key, allowed){
+  const { error } = await supabaseClient.from('user_permissions').upsert({ user_id:userId, permission_key:key, allowed });
+  if(error){ toast(error.message,'error'); return; }
+  toast('Permission update हो गया','success');
+  if(userId === state.profile.id) await loadPermissions();
+  render();
+}
+async function resetUserPermission(userId, key){
+  await supabaseClient.from('user_permissions').delete().eq('user_id',userId).eq('permission_key',key);
+  if(userId === state.profile.id) await loadPermissions();
+  toast('Role default पर reset किया','success');
+  render();
+}
+async function getEffectivePermsForUser(user){
+  if(user.roles && user.roles.name==='super_admin') return new Set(ALL_PERMISSIONS);
+  const { data: rolePerms } = await supabaseClient.from('role_permissions').select('permissions(key)').eq('role_id', user.role_id);
+  const set = new Set((rolePerms||[]).map(r=>r.permissions && r.permissions.key).filter(Boolean));
+  const { data: overrides } = await supabaseClient.from('user_permissions').select('permission_key,allowed').eq('user_id', user.id);
+  const overrideMap = {};
+  (overrides||[]).forEach(o=>{ overrideMap[o.permission_key]=o.allowed; if(o.allowed) set.add(o.permission_key); else set.delete(o.permission_key); });
+  return { set, overrideMap };
+}
+
+/* ============================================================
+   SETTINGS
+============================================================ */
+async function saveTowerSetting(code, fields){
+  confirmDialog('Tower structure बदलने से नए floor/flat options बदल जाएंगे। मौजूदा vehicles data सुरक्षित रहेगा, लेकिन कृपया ध्यान से बदलें। जारी रखें?', async ()=>{
+    const { error } = await supabaseClient.from('tower_settings').update(fields).eq('tower_code', code);
+    if(error){ toast(error.message,'error'); return; }
+    toast('Tower settings save हो गई','success');
+    await loadTowerSettings(); render();
+  }, { title:'Tower Settings बदलें' });
+}
+async function addDutyPost(name, maxGuards){
+  if(!name || !name.trim()){ toast('Post का नाम भरें','error'); return; }
+  const { error } = await supabaseClient.from('duty_posts').insert({ name: name.trim(), max_guards: maxGuards || 2 });
+  if(error){ toast(error.message,'error'); return; }
+  toast('नई Post जोड़ दी गई','success');
+  await loadDutyPosts();
+  render();
+}
+function deleteDutyPost(id){
+  confirmDialog('इस Duty Post को हटाना चाहते हैं?', async ()=>{
+    const { error } = await supabaseClient.from('duty_posts').delete().eq('id', id);
+    if(error){ toast(error.message,'error'); return; }
+    toast('Post हटा दी गई','success');
+    await loadDutyPosts();
+    render();
+  });
+}
+async function saveSocietyName(name){
+  const { data: existing } = await supabaseClient.from('society_settings').select('id').limit(1).maybeSingle();
+  if(existing){
+    await supabaseClient.from('society_settings').update({ society_name: name }).eq('id', existing.id);
+  } else {
+    await supabaseClient.from('society_settings').insert({ society_name: name });
+  }
+  state.societyName = name;
+  toast('Society नाम save हो गया','success');
+  render();
+}
+async function saveAdminWhatsapp(number){
+  const { data: existing } = await supabaseClient.from('society_settings').select('id').limit(1).maybeSingle();
+  if(existing){
+    await supabaseClient.from('society_settings').update({ admin_whatsapp: number }).eq('id', existing.id);
+  } else {
+    await supabaseClient.from('society_settings').insert({ admin_whatsapp: number });
+  }
+  state.adminWhatsapp = number;
+  toast('WhatsApp Number save हो गया','success');
+  render();
+}
+
+/* ============================================================
+   PROFILE
+============================================================ */
+function openProfileEdit(){
+  state.profileForm = { ...state.profile };
+  setPage('profileEdit');
+}
+async function submitProfileEdit(){
+  const f = state.profileForm;
+  const { error } = await supabaseClient.from('profiles').update({
+    name: f.name, mobile: f.mobile, updated_at: new Date().toISOString()
+  }).eq('id', f.id);
+  if(error){ toast(error.message,'error'); return; }
+  toast('Profile update हो गया','success');
+  const { data } = await supabaseClient.from('profiles').select('*, roles(name)').eq('id', f.id).single();
+  state.profile = data;
+  setPage('profile');
+}
+async function uploadAvatar(file){
+  if(!file) return;
+  toast('Photo upload हो रही है...','info');
+  const path = state.profile.id + '/avatar.' + (file.name.split('.').pop()||'jpg');
+  const { error } = await supabaseClient.storage.from('avatars').upload(path, file, { upsert:true });
+  if(error){ toast(error.message,'error'); return; }
+  const { data: pub } = supabaseClient.storage.from('avatars').getPublicUrl(path);
+  await supabaseClient.from('profiles').update({ photo_url: pub.publicUrl }).eq('id', state.profile.id);
+  state.profile.photo_url = pub.publicUrl;
+  toast('Profile photo update हो गई','success');
+  render();
+}
+
+/* ============================================================
+   RENDER — AUTH SCREENS
+============================================================ */
+function renderConfigScreen(){
+  return `
+  <div class="min-h-screen flex flex-col items-center justify-center p-6 text-center">
+    <div class="w-16 h-16 rounded-2xl bg-blue-600 text-white flex items-center justify-center mb-4">${icon('car','w-8 h-8')}</div>
+    <h1 class="text-lg font-bold mb-2">Supabase Setup बाकी है</h1>
+    <p class="text-sm text-slate-500 leading-relaxed">index.html की शुरुआत में <b>SUPABASE_URL</b> और <b>SUPABASE_ANON_KEY</b> डालें। ये आपको आपके Supabase project के Settings → API में मिलेंगे। साथ ही दिया गया supabase_schema.sql फ़ाइल Supabase के SQL Editor में run करें।</p>
+  </div>`;
+}
+
+function onboardingIllustration(){
+  return `
+  <svg viewBox="0 0 360 230" xmlns="http://www.w3.org/2000/svg" class="w-full h-auto">
+    <defs>
+      <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="#bfe3ff"/>
+        <stop offset="100%" stop-color="#eaf6ff"/>
+      </linearGradient>
+      <linearGradient id="roadg" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="#94a3b8"/>
+        <stop offset="100%" stop-color="#64748b"/>
+      </linearGradient>
+    </defs>
+    <rect x="0" y="0" width="360" height="230" rx="20" fill="url(#sky)"/>
+    <circle cx="300" cy="35" r="18" fill="#ffffff" opacity="0.8"/>
+    <circle cx="60" cy="28" r="12" fill="#ffffff" opacity="0.6"/>
+    <g opacity="0.95">
+      <rect x="18" y="70" width="40" height="95" fill="#7fa8d9"/>
+      <rect x="64" y="45" width="46" height="120" fill="#5f8fc7"/>
+      <rect x="116" y="60" width="42" height="105" fill="#7fa8d9"/>
+      <rect x="264" y="50" width="44" height="115" fill="#7fa8d9"/>
+      <rect x="312" y="65" width="38" height="100" fill="#5f8fc7"/>
+      ${[0,1,2,3,4,5].map(r=>[0,1,2].map(c=>`<rect x="${24+c*10}" y="${80+r*14}" width="6" height="8" fill="#e8f3ff" opacity="0.85"/>`).join('')).join('')}
+      ${[0,1,2,3,4,5,6].map(r=>[0,1,2].map(c=>`<rect x="${70+c*13}" y="${55+r*14}" width="7" height="8" fill="#e8f3ff" opacity="0.85"/>`).join('')).join('')}
+      ${[0,1,2,3,4,5].map(r=>[0,1,2].map(c=>`<rect x="${272+c*11}" y="${60+r*14}" width="6" height="8" fill="#e8f3ff" opacity="0.85"/>`).join('')).join('')}
+    </g>
+    <rect x="0" y="165" width="360" height="30" fill="url(#roadg)"/>
+    <rect x="0" y="195" width="360" height="35" fill="#8bc98f"/>
+    <rect x="0" y="178" width="360" height="4" fill="#fde68a" opacity="0.7"/>
+    <g>
+      <circle cx="40" cy="205" r="14" fill="#4d9a55"/>
+      <rect x="38" y="215" width="4" height="10" fill="#7a5230"/>
+      <circle cx="330" cy="208" r="12" fill="#4d9a55"/>
+      <rect x="328" y="216" width="4" height="9" fill="#7a5230"/>
+    </g>
+    <g>
+      <rect x="150" y="150" width="6" height="35" fill="#1f2937"/>
+      <rect x="118" y="149" width="40" height="6" rx="2" fill="#facc15" transform="rotate(-18 150 152)"/>
+      <rect x="145" y="182" width="18" height="4" fill="#334155"/>
+    </g>
+    <g transform="translate(178,150)">
+      <rect x="0" y="14" width="86" height="22" rx="7" fill="#ffffff"/>
+      <path d="M8 14 L20 -2 L62 -2 L78 14 Z" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="1.5"/>
+      <rect x="24" y="0" width="36" height="14" rx="3" fill="#93c5fd" opacity="0.7"/>
+      <circle cx="18" cy="37" r="8" fill="#1f2937"/>
+      <circle cx="18" cy="37" r="3" fill="#94a3b8"/>
+      <circle cx="66" cy="37" r="8" fill="#1f2937"/>
+      <circle cx="66" cy="37" r="3" fill="#94a3b8"/>
+      <rect x="2" y="18" width="82" height="4" fill="#dbeafe"/>
+    </g>
+  </svg>`;
+}
+function renderOnboarding(){
+  return `
+  <div class="min-h-screen relative overflow-hidden bg-gradient-to-b from-blue-800 via-blue-700 to-blue-500 flex flex-col items-center justify-between px-6 py-10 text-center fade-in">
+    <div class="absolute -top-10 -left-16 w-56 h-56 rounded-full bg-white/5"></div>
+    <div class="absolute top-1/3 -right-20 w-64 h-64 rounded-full bg-white/5"></div>
+    <div class="absolute bottom-10 -left-10 w-40 h-40 rounded-full bg-white/5"></div>
+    <div class="relative flex flex-col items-center w-full">
+      <div class="w-16 h-16 rounded-full bg-white/15 border border-white/30 text-white flex items-center justify-center mb-3 shadow-xl">${icon('car','w-8 h-8')}</div>
+      <h1 class="text-xl font-bold text-white leading-tight">Society<br>Vehicle Manager</h1>
+      <p class="text-blue-100 text-xs mt-1.5">Smart Parking &nbsp;|&nbsp; Safe Community &nbsp;|&nbsp; Better Living</p>
+      <div class="w-full max-w-xs mt-5 rounded-2xl overflow-hidden shadow-xl">
+        ${onboardingIllustration()}
+      </div>
+      <h2 class="text-white text-lg font-bold mt-5">Welcome</h2>
+      <p class="text-blue-100 text-xs mt-1">Manage your society vehicles easily and securely.</p>
+      <div class="flex gap-1.5 mt-3">
+        <span class="w-1.5 h-1.5 rounded-full bg-white"></span>
+        <span class="w-1.5 h-1.5 rounded-full bg-white/40"></span>
+        <span class="w-1.5 h-1.5 rounded-full bg-white/40"></span>
+        <span class="w-1.5 h-1.5 rounded-full bg-white/40"></span>
+      </div>
+    </div>
+    <button onclick="finishOnboarding()" class="relative w-full max-w-xs py-3.5 rounded-xl bg-white text-blue-700 font-bold flex items-center justify-center gap-2 shadow-xl mt-6">Get Started ${icon('chevron','w-4 h-4')}</button>
+  </div>`;
+}
+
+function authShell(inner, subtitle, opts){
+  opts = opts || {};
+  return `
+  <div class="min-h-screen flex flex-col justify-center px-6 py-10 fade-in bg-gray-50">
+    <div class="flex flex-col items-center mb-6">
+      <div class="w-16 h-16 rounded-full bg-blue-600 text-white flex items-center justify-center mb-3 shadow-lg shadow-blue-200">${icon('car','w-8 h-8')}</div>
+      <h1 class="text-xl font-bold text-slate-900 text-center">Society<br>Vehicle Manager</h1>
+      <p class="text-sm text-blue-600 font-medium mt-2">${subtitle||''}</p>
+    </div>
+    ${state.authMsg ? `<div class="mb-4 text-sm bg-emerald-50 text-emerald-700 px-4 py-2.5 rounded-xl">${state.authMsg}</div>` : ''}
+    ${state.authError ? `<div class="mb-4 text-sm bg-rose-50 text-rose-600 px-4 py-2.5 rounded-xl">${state.authError}</div>` : ''}
+    ${opts.showTabs ? `
+    <div class="flex bg-gray-100 rounded-xl p-1 mb-4">
+      <button onclick="state.authTab='phone';render()" class="flex-1 py-2 rounded-lg text-sm font-semibold ${state.authTab==='phone'?'bg-blue-600 text-white':'text-slate-500'}">Guard Login</button>
+      <button onclick="state.authTab='email';render()" class="flex-1 py-2 rounded-lg text-sm font-semibold ${state.authTab==='email'?'bg-blue-600 text-white':'text-slate-500'}">Admin Login</button>
+    </div>` : ''}
+    ${inner}
+  </div>`;
+}
+
+function inputWithIcon(id, type, placeholder, iconName, extra){
+  return `
+  <div class="relative">
+    <span class="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">${icon(iconName,'w-4 h-4')}</span>
+    <input id="${id}" type="${type}" placeholder="${placeholder}" ${extra||''} class="w-full pl-9 pr-3 py-3 rounded-xl border border-gray-200 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm">
+  </div>`;
+}
+
+function renderLogin(){
+  if(!state.authTab || state.authTab==='phone'){
+    return authShell(`
+      <div class="space-y-3">
+        ${inputWithIcon('login-mobile','tel','Mobile Number','phone')}
+        ${inputWithIcon('login-password','password','Password','shield')}
+        <div class="flex items-center justify-end text-xs px-0.5">
+          <button onclick="openForgotWhatsapp()" class="text-blue-600 font-medium">Forgot Password?</button>
+        </div>
+        <button onclick="doMobileLogin(document.getElementById('login-mobile').value.trim(), document.getElementById('login-password').value)" class="w-full py-3 rounded-xl bg-blue-600 text-white font-semibold ${state.loading?'opacity-60':''}" ${state.loading?'disabled':''}>
+          ${state.loading ? 'कृपया रुकें...' : 'Login'}
+        </button>
+        <p class="text-center text-[11px] text-slate-400 pt-1">नया Guard account बनवाने के लिए अपने Admin से संपर्क करें</p>
+      </div>
+    `, 'Guard Login', { showTabs:true });
+  }
+  return authShell(`
+    <div class="space-y-3">
+      ${inputWithIcon('login-email','email','Email Address','message')}
+      ${inputWithIcon('login-password','password','Password','shield')}
+      <div class="flex items-center justify-between text-xs px-0.5">
+        <label class="flex items-center gap-1.5 text-slate-500"><input type="checkbox" checked class="rounded"> Remember me</label>
+        <button onclick="state.authError='';state.authMsg='';state.page='forgot';render()" class="text-blue-600 font-medium">Forgot Password?</button>
+      </div>
+      <button onclick="doLogin(document.getElementById('login-email').value.trim(), document.getElementById('login-password').value)" class="w-full py-3 rounded-xl bg-blue-600 text-white font-semibold ${state.loading?'opacity-60':''}" ${state.loading?'disabled':''}>
+        ${state.loading ? 'कृपया रुकें...' : 'Login'}
+      </button>
+      <p class="text-center text-xs text-slate-400 pt-1">or</p>
+      <button onclick="state.authError='';state.authMsg='';state.page='register';render()" class="w-full text-center text-sm py-1">पहला Admin Account बनाएं? <span class="text-blue-600 font-semibold">Sign Up</span></button>
+    </div>
+  `, 'Admin Login', { showTabs:true });
+}
+function renderRegister(){
+  return authShell(`
+    <div class="space-y-3">
+      ${inputWithIcon('reg-name','text','Full Name','user')}
+      ${inputWithIcon('reg-email','email','Email Address','message')}
+      ${inputWithIcon('reg-password','password','Create a strong password','shield')}
+      ${inputWithIcon('reg-confirm','password','Confirm Password','shield')}
+      <button onclick="doRegister(document.getElementById('reg-name').value.trim(), document.getElementById('reg-email').value.trim(), document.getElementById('reg-password').value, document.getElementById('reg-confirm').value)" class="w-full py-3 rounded-xl bg-blue-600 text-white font-semibold ${state.loading?'opacity-60':''}" ${state.loading?'disabled':''}>
+        ${state.loading ? 'कृपया रुकें...' : 'Register'}
+      </button>
+      <button onclick="state.authError='';state.page='login';render()" class="w-full text-center text-sm py-1">पहले से Account है? <span class="text-blue-600 font-semibold">Login</span></button>
+    </div>
+  `, 'Create your account');
+}
+function renderForgot(){
+  return `
+  <div class="min-h-screen flex flex-col justify-center px-6 py-10 fade-in bg-gray-50">
+    <div class="flex flex-col items-center mb-6">
+      <div class="w-16 h-16 rounded-full bg-blue-600 text-white flex items-center justify-center mb-3 shadow-lg shadow-blue-200">${icon('car','w-8 h-8')}</div>
+      <h1 class="text-xl font-bold text-slate-900 text-center">Password Reset करें</h1>
+    </div>
+    ${state.authMsg ? `<div class="mb-4 text-sm bg-emerald-50 text-emerald-700 px-4 py-2.5 rounded-xl">${state.authMsg}</div>` : ''}
+    ${state.authError ? `<div class="mb-4 text-sm bg-rose-50 text-rose-600 px-4 py-2.5 rounded-xl">${state.authError}</div>` : ''}
+    <div class="space-y-3">
+      <p class="text-sm text-slate-500">अपना registered email डालें, हम reset link भेज देंगे।</p>
+      ${inputWithIcon('forgot-email','email','Email Address','message')}
+      <button onclick="doForgot(document.getElementById('forgot-email').value.trim())" class="w-full py-3 rounded-xl bg-blue-600 text-white font-semibold ${state.loading?'opacity-60':''}" ${state.loading?'disabled':''}>
+        ${state.loading ? 'कृपया रुकें...' : 'Reset Link भेजें'}
+      </button>
+      <button onclick="state.authError='';state.page='login';render()" class="w-full text-center text-sm text-blue-600 py-1">वापस Login पर जाएं</button>
+    </div>
+  </div>`;
+}
+
+/* ============================================================
+   RENDER — APP SHELL
+============================================================ */
+async function toggleDuty(){
+  if(state.profile.on_duty){
+    const { error } = await supabaseClient.from('profiles').update({ on_duty: false, duty_since: null }).eq('id', state.profile.id);
+    if(error){ toast(error.message,'error'); return; }
+    state.profile.on_duty = false;
+    await supabaseClient.from('duty_sessions').update({ end_time: new Date().toISOString() }).eq('guard_id', state.profile.id).is('end_time', null);
+    await supabaseClient.from('activity_logs').insert({ user_id: state.profile.id, action: 'duty_off' });
+    toast('आपकी Duty खत्म हो गई','info');
+    render();
+    return;
+  }
+  await openDutyTowerModal();
+}
+async function openDutyTowerModal(){
+  const { data: onDutyGuards } = await supabaseClient.from('profiles').select('tower').eq('on_duty', true);
+  const counts = {};
+  (onDutyGuards||[]).forEach(g=>{ if(g.tower) counts[g.tower] = (counts[g.tower]||0) + 1; });
+  const root = document.getElementById('modal-root');
+  const rowHtml = (label, code, cap) => {
+    const c = counts[code] || 0;
+    const full = c >= cap;
+    return `
+    <button ${full?'disabled':''} onclick="confirmDutyOn('${code}', ${cap})" class="w-full flex items-center justify-between px-4 py-3 rounded-xl border ${full?'bg-gray-50 border-gray-100 opacity-60':'bg-white border-gray-200 active:bg-blue-50'}">
+      <span class="font-semibold text-slate-800">${label}</span>
+      <span class="text-xs font-medium ${full?'text-rose-500':'text-emerald-600'}">${c}/${cap} Guards ${full?'(Full)':''}</span>
+    </button>`;
+  };
+  root.innerHTML = `
+    <div class="fixed inset-0 bg-black/40 z-[90] flex items-end sm:items-center justify-center" onclick="if(event.target===event.currentTarget)document.getElementById('modal-root').innerHTML=''">
+      <div class="bg-white w-full max-w-md rounded-t-2xl sm:rounded-2xl p-5 fade-in">
+        <div class="flex items-start gap-3 mb-3">
+          <div class="w-10 h-10 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0">${icon('building','w-5 h-5')}</div>
+          <div>
+            <p class="font-semibold text-slate-900">आज आप कहाँ Duty पर हैं?</p>
+            <p class="text-sm text-slate-500 mt-1">हर जगह की एक तय Guard limit है</p>
+          </div>
+        </div>
+        <div class="space-y-3 max-h-96 overflow-y-auto">
+          <div>
+            <p class="text-[11px] font-semibold text-slate-400 mb-1.5">TOWER</p>
+            <div class="space-y-2">
+              ${state.towers.map(t => rowHtml('Tower '+t.tower_code, t.tower_code, 2)).join('')}
+            </div>
+          </div>
+          ${state.dutyPosts.length ? `
+          <div>
+            <p class="text-[11px] font-semibold text-slate-400 mb-1.5">अन्य Post (बिना Tower)</p>
+            <div class="space-y-2">
+              ${state.dutyPosts.map(p => rowHtml(p.name, p.name, p.max_guards)).join('')}
+            </div>
+          </div>` : ''}
+        </div>
+        <button class="w-full mt-4 py-2.5 rounded-xl bg-gray-100 text-slate-700 font-medium text-sm" onclick="document.getElementById('modal-root').innerHTML=''">Cancel</button>
+      </div>
+    </div>`;
+}
+async function confirmDutyOn(code, cap){
+  cap = cap || 2;
+  const { data: onDutyGuards } = await supabaseClient.from('profiles').select('id').eq('on_duty', true).eq('tower', code);
+  if((onDutyGuards||[]).length >= cap){
+    toast('यहाँ पहले से Guard limit पूरी है। कृपया कोई और जगह चुनें।','error');
+    await openDutyTowerModal();
+    return;
+  }
+  const { error } = await supabaseClient.from('profiles').update({ on_duty: true, tower: code, duty_since: new Date().toISOString() }).eq('id', state.profile.id);
+  document.getElementById('modal-root').innerHTML = '';
+  if(error){ toast(error.message,'error'); return; }
+  state.profile.on_duty = true;
+  state.profile.tower = code;
+  await supabaseClient.from('duty_sessions').insert({ guard_id: state.profile.id, tower: code, start_time: new Date().toISOString() });
+  await supabaseClient.from('activity_logs').insert({ user_id: state.profile.id, action: 'duty_on', details:{ tower: code } });
+  toast('आप अब '+dutyPostLabel(code)+' की Duty पर हैं','success');
+  render();
+}
+function dutyBarInner(){
+  const on = !!(state.profile && state.profile.on_duty);
+  return `
+  <div class="bg-white px-4 py-2 flex items-center justify-between border-b border-gray-100">
+    <span class="text-xs font-medium text-slate-500">${on ? `आप ${dutyPostLabel(state.profile.tower)} की Duty पर हैं` : 'आप Duty पर नहीं हैं'}</span>
+    <button onclick="toggleDuty()" class="flex items-center gap-2 px-3.5 py-1.5 rounded-full text-xs font-bold ${on?'bg-emerald-500 text-white shadow-md shadow-emerald-200':'bg-gray-100 text-slate-500'}">
+      <span class="w-2 h-2 rounded-full ${on?'bg-white':'bg-slate-400'} ${on?'animate-pulse':''}"></span>
+      ${on ? 'Duty ON' : 'Duty OFF'}
+    </button>
+  </div>`;
+}
+function header(title, opts){
+  opts = opts || {};
+  const openAlerts = state.alerts.filter(a=>a.status==='open').length;
+  return `
+  <div class="sticky top-0 z-20 shadow-md">
+    ${broadcastBannerHtml()}
+    <div class="bg-gradient-to-r from-blue-800 to-blue-600 px-4 py-4 flex items-center justify-between">
+    <div class="flex items-center gap-2">
+      ${opts.back ? `<button onclick="${opts.back}" class="p-1 -ml-1 text-white">${icon('back','w-5 h-5')}</button>` : ''}
+      <h1 class="font-bold text-white text-base">${title}</h1>
+    </div>
+    <div class="flex items-center gap-2">
+      ${opts.right || ''}
+      <button onclick="setPage('alerts')" class="relative p-1.5 text-white">
+        ${icon('bell','w-5 h-5')}
+        ${openAlerts ? `<span class="absolute -top-0.5 -right-0.5 w-4 h-4 rounded-full bg-rose-500 text-white text-[9px] flex items-center justify-center">${openAlerts>9?'9+':openAlerts}</span>` : ''}
+      </button>
+      <button onclick="setPage('profile')" class="w-8 h-8 rounded-full bg-white/20 text-white flex items-center justify-center overflow-hidden shrink-0">
+        ${state.profile && state.profile.photo_url ? `<img src="${state.profile.photo_url}" class="w-full h-full object-cover">` : icon('user','w-4 h-4')}
+      </button>
+    </div>
+    </div>
+    ${dutyBarInner()}
+  </div>`;
+}
+
+function navItems(){
+  const items = [{ key:'dashboard', label:'Home', icon:'home' }];
+  if(hasPerm('view_vehicles')) items.push({ key:'vehicles', label:'Vehicles', icon:'car' });
+  items.push({ key:'camera', label:'Scan', icon:'camera' });
+  if(hasPerm('manage_users')) items.push({ key:'users', label:'Members', icon:'admin' });
+  items.push({ key:'profile', label:'Profile', icon:'user' });
+  return items;
+}
+function bottomNav(){
+  const items = navItems();
+  const activeKey = state.page;
+  return `
+  <div class="fixed bottom-0 left-0 right-0 z-30">
+    <div class="max-w-md mx-auto bg-white border-t border-gray-100 flex safe-bottom shadow-[0_-2px_10px_rgba(0,0,0,0.06)]">
+      ${items.map(it => `
+        <button onclick="setPage('${it.key}')" class="flex-1 flex flex-col items-center py-2.5 ${activeKey===it.key?'text-blue-600':'text-slate-400'}">
+          <span class="w-9 h-7 rounded-full flex items-center justify-center ${activeKey===it.key?'bg-blue-50':''}">${icon(it.icon,'w-5 h-5')}</span>
+          <span class="text-[10px] mt-0.5 font-medium">${it.label}</span>
+        </button>
+      `).join('')}
+    </div>
+  </div>`;
+}
+
+function fabButton(){
+  if(!hasPerm('add_vehicles')) return '';
+  return `
+  <button onclick="setPage('addVehicle')" class="fixed z-40 right-5 bottom-[84px] w-14 h-14 rounded-full bg-blue-600 text-white shadow-xl shadow-blue-300 flex items-center justify-center active:scale-95 transition">
+    ${icon('plus','w-7 h-7')}
+  </button>`;
+}
+function emptyState(msg, actionLabel, actionFn){
+  return `
+  <div class="flex flex-col items-center justify-center py-16 text-center px-6">
+    <div class="w-16 h-16 rounded-full bg-gray-100 text-gray-300 flex items-center justify-center mb-3">${icon('car','w-8 h-8')}</div>
+    <p class="text-slate-400 text-sm mb-4">${msg}</p>
+    ${actionLabel ? `<button onclick="${actionFn}" class="px-5 py-2.5 rounded-xl bg-blue-600 text-white text-sm font-semibold">${actionLabel}</button>` : ''}
+  </div>`;
+}
+function skeletonCards(n){
+  let out = '';
+  for(let i=0;i<(n||3);i++) out += `<div class="skeleton h-20 rounded-2xl mb-3"></div>`;
+  return `<div class="p-4">${out}</div>`;
+}
+
+/* ---------- DASHBOARD ---------- */
+function renderDashboard(){
+  const totalVehicles = state.vehicles.length;
+  const totalParkings = state.vehicles.filter(v=>v.parking_number).length;
+  const totalGuards = state.users.length;
+  const firstName = (state.profile.name || 'Guard').split(' ')[0];
+  const byTower = {};
+  state.vehicles.forEach(v=>{ byTower[v.tower] = (byTower[v.tower]||0) + 1; });
+
+  const stat = (icoName, label, val) => `
+    <div class="bg-white rounded-2xl py-4 px-2 flex flex-col items-center shadow-[0_2px_12px_rgba(15,23,42,0.06)] border border-gray-50">
+      <div class="text-blue-600 mb-2">${icon(icoName,'w-6 h-6')}</div>
+      <p class="text-slate-400 text-xs">${label}</p>
+      <p class="text-2xl font-extrabold text-slate-900 mt-0.5">${val}</p>
+    </div>`;
+
+  return `
+  <div class="sticky top-0 z-20">
+    ${broadcastBannerHtml()}
+    <div class="bg-gray-50 px-4 py-4 flex items-center justify-between">
+      <button onclick="setPage('profile')" class="p-1 text-slate-700">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" class="w-6 h-6"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+      </button>
+      <h1 class="text-2xl font-extrabold text-slate-900">Dashboard</h1>
+      <button onclick="setPage('alerts')" class="relative w-9 h-9 rounded-full bg-white shadow-sm text-slate-700 flex items-center justify-center overflow-hidden">
+        ${state.profile.photo_url ? `<img src="${state.profile.photo_url}" class="w-full h-full object-cover">` : icon('user','w-4 h-4')}
+        ${state.alerts.filter(a=>a.status==='open').length ? `<span class="absolute -top-0.5 -right-0.5 w-3.5 h-3.5 rounded-full bg-rose-500 border-2 border-gray-50"></span>` : ''}
+      </button>
+    </div>
+    ${dutyBarInner()}
+  </div>
+  <div class="p-4 space-y-5">
+    <div class="relative overflow-hidden bg-gradient-to-br from-blue-700 via-blue-600 to-indigo-600 rounded-3xl p-5 text-white shadow-xl shadow-blue-200/60">
+      <div class="absolute -right-6 -top-8 w-32 h-32 rounded-full bg-white/10"></div>
+      <div class="absolute right-8 top-10 w-16 h-16 rounded-full bg-white/10"></div>
+      <div class="relative flex items-start justify-between">
+        <div>
+          <p class="text-blue-100 text-sm">नमस्ते,</p>
+          <p class="text-2xl font-bold mt-0.5">${firstName}</p>
+          <p class="text-blue-100 text-xs mt-1">${state.societyName || 'Society Vehicle Manager'}</p>
+        </div>
+        <div class="w-14 h-14 rounded-2xl bg-white/15 flex items-center justify-center shrink-0">${icon('building','w-7 h-7')}</div>
+      </div>
+    </div>
+
+    <div class="grid grid-cols-4 gap-2.5">
+      ${stat('car','Vehicles', totalVehicles)}
+      ${stat('building','Towers', state.towers.length)}
+      ${stat('parking','Parkings', totalParkings)}
+      ${stat('admin','Guards', totalGuards)}
+    </div>
+
+    <div class="grid grid-cols-3 gap-2.5">
+      ${hasPerm('add_vehicles') ? `<button onclick="setPage('addVehicle')" class="rounded-2xl p-3.5 flex flex-col items-center gap-1.5 shadow-md active:scale-95 transition bg-emerald-50"><div class="w-9 h-9 rounded-full text-emerald-700 bg-white/70 flex items-center justify-center">${icon('plus','w-4 h-4')}</div><span class="text-xs font-semibold text-center text-emerald-700">Add Vehicle</span></button>` : ''}
+      <button onclick="setPage('camera')" class="rounded-2xl p-3.5 flex flex-col items-center gap-1.5 shadow-md active:scale-95 transition bg-amber-50"><div class="w-9 h-9 rounded-full text-amber-700 bg-white/70 flex items-center justify-center">${icon('camera','w-4 h-4')}</div><span class="text-xs font-semibold text-center text-amber-700">Scan Plate</span></button>
+      <button onclick="setPage('alerts')" class="rounded-2xl p-3.5 flex flex-col items-center gap-1.5 shadow-md active:scale-95 transition bg-orange-50"><div class="w-9 h-9 rounded-full text-orange-700 bg-white/70 flex items-center justify-center">${icon('bell','w-4 h-4')}</div><span class="text-xs font-semibold text-center text-orange-700">Tower Alerts</span></button>
+    </div>
+
+    <button onclick="openBroadcastAlertModal()" class="w-full flex items-center justify-center gap-2 py-3.5 rounded-2xl bg-rose-600 text-white font-bold shadow-lg shadow-rose-200 active:scale-[0.98] transition">${icon('warning','w-5 h-5')} सभी Guards को Emergency Alert भेजें</button>
+
+    <div>
+      <div class="flex items-center justify-between mb-2">
+        <p class="text-lg font-extrabold text-slate-900">Vehicles by Tower</p>
+        <button onclick="setPage('vehicles')" class="text-xs text-blue-600 font-semibold">View all</button>
+      </div>
+      <div class="bg-white rounded-2xl shadow-[0_2px_12px_rgba(15,23,42,0.06)] border border-gray-50 divide-y divide-gray-50 overflow-hidden">
+        ${!state.vehiclesLoaded ? skeletonCards(3) : state.towers.map(t => `
+          <button onclick="state.filters={tower:'${t.tower_code}',floor:'',flat:''};setPage('vehicles')" class="w-full flex items-center gap-3 px-4 py-3.5">
+            <div class="w-11 h-11 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">${icon('building','w-5 h-5')}</div>
+            <div class="flex-1 text-left">
+              <p class="font-bold text-slate-900">Tower ${t.tower_code}</p>
+              <p class="text-xs text-slate-400">${byTower[t.tower_code]||0} vehicles</p>
+            </div>
+            ${icon('chevron','w-4 h-4 text-slate-300')}
+          </button>
+        `).join('')}
+      </div>
+    </div>
+  </div>
+  ${fabButton()}
+  ${bottomNav()}
+  `;
+}
+
+const VEHICLE_TYPE_STYLE = {
+  car:  { icon:'car', bg:'bg-blue-50', fg:'text-blue-600' },
+  bike: { icon:'car', bg:'bg-amber-50', fg:'text-amber-600' },
+  other:{ icon:'car', bg:'bg-purple-50', fg:'text-purple-600' }
+};
+function vehicleCard(v){
+  const ts = VEHICLE_TYPE_STYLE[v.vehicle_type||'car'] || VEHICLE_TYPE_STYLE.car;
+  return `
+  <div class="bg-white rounded-2xl p-3.5 mb-3 shadow-[0_2px_12px_rgba(15,23,42,0.06)] border border-gray-50 fade-in">
+    <div class="flex items-start justify-between cursor-pointer" onclick="state.viewingVehicleId='${v.id}';setPage('viewVehicle')">
+      <div class="flex items-center gap-3">
+        <div class="w-11 h-11 rounded-xl ${ts.bg} ${ts.fg} flex items-center justify-center shrink-0">${icon(ts.icon,'w-5 h-5')}</div>
+        <div>
+          <p class="font-bold text-slate-900 tracking-wide">${v.vehicle_number}</p>
+          <p class="text-xs text-slate-400">Tower ${v.tower} • Floor ${v.floor} • Flat ${v.flat}</p>
+        </div>
+      </div>
+      <span class="text-[10px] px-2 py-1 rounded-full bg-gray-100 text-slate-500 shrink-0">${v.parking_number ? 'P-'+v.parking_number : 'No Parking'}</span>
+    </div>
+    ${isRealTower(state.profile.tower) && state.profile.tower !== v.tower ? `<div class="mt-2 flex items-center gap-1.5 text-[11px] text-amber-700 bg-amber-50 rounded-lg px-2.5 py-1.5">${icon('warning','w-3.5 h-3.5')} यह Tower ${v.tower} की गाड़ी है <button onclick="event.stopPropagation();openSendAlert('${v.id}')" class="ml-auto font-semibold underline">Alert भेजें</button></div>` : ''}
+    <div class="flex gap-2 mt-3 pt-3 border-t border-gray-50">
+      ${hasPerm('edit_vehicles') ? `<button onclick="event.stopPropagation();openEditVehicle('${v.id}')" class="flex-1 flex items-center justify-center gap-1 py-1.5 rounded-lg bg-amber-50 text-amber-600 text-xs font-medium">${icon('edit','w-3.5 h-3.5')} Edit</button>` : ''}
+      ${hasPerm('delete_vehicles') ? `<button onclick="event.stopPropagation();deleteVehicle('${v.id}')" class="flex-1 flex items-center justify-center gap-1 py-1.5 rounded-lg bg-rose-50 text-rose-600 text-xs font-medium">${icon('trash','w-3.5 h-3.5')} Delete</button>` : ''}
+    </div>
+  </div>`;
+}
+function renderViewVehicle(){
+  const v = state.vehicles.find(x=>x.id===state.viewingVehicleId);
+  if(!v) return `${header('Vehicle Details', {back:"setPage('vehicles')"})}<div class="p-6">${emptyState('Vehicle नहीं मिला')}</div>`;
+  const ts = VEHICLE_TYPE_STYLE[v.vehicle_type||'car'] || VEHICLE_TYPE_STYLE.car;
+  const row = (label, val) => `<div class="flex justify-between py-2.5 border-b border-gray-50 last:border-0"><span class="text-xs text-slate-400">${label}</span><span class="text-sm font-semibold text-slate-800">${val||'-'}</span></div>`;
+  return `
+    ${header('Vehicle Details', { back:"setPage('vehicles')" })}
+    <div class="p-4 space-y-4">
+      <div class="bg-white rounded-2xl p-5 shadow-[0_2px_12px_rgba(15,23,42,0.06)] border border-gray-50 flex flex-col items-center">
+        <div class="w-20 h-20 rounded-2xl ${ts.bg} ${ts.fg} flex items-center justify-center mb-3">${icon(ts.icon,'w-9 h-9')}</div>
+        <p class="text-xl font-bold text-slate-900 tracking-wide">${v.vehicle_number}</p>
+        <span class="text-[10px] px-2 py-1 rounded-full bg-gray-100 text-slate-500 mt-1 capitalize">${v.vehicle_type||'car'}</span>
+      </div>
+      <div class="bg-white rounded-2xl p-4 shadow-[0_2px_12px_rgba(15,23,42,0.06)] border border-gray-50">
+        ${row('Tower', v.tower)}
+        ${row('Floor', v.floor==='Ground'?'Ground':'Floor '+v.floor)}
+        ${row('Flat No', v.flat)}
+        ${row('Parking No', v.parking_number)}
+        ${row('Notes', v.notes)}
+      </div>
+      <div class="flex gap-2">
+        ${hasPerm('edit_vehicles') ? `<button onclick="openEditVehicle('${v.id}')" class="flex-1 flex items-center justify-center gap-1.5 py-3 rounded-xl bg-blue-600 text-white text-sm font-semibold">${icon('edit','w-4 h-4')} Edit</button>` : ''}
+        ${hasPerm('delete_vehicles') ? `<button onclick="deleteVehicle('${v.id}')" class="flex-1 flex items-center justify-center gap-1.5 py-3 rounded-xl bg-rose-50 text-rose-600 text-sm font-semibold">${icon('trash','w-4 h-4')} Delete</button>` : ''}
+      </div>
+      ${isRealTower(state.profile.tower) && state.profile.tower !== v.tower ? `
+      <button onclick="openSendAlert('${v.id}')" class="w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-amber-500 text-white text-sm font-semibold shadow-md shadow-amber-200">${icon('warning','w-4 h-4')} यह गाड़ी यहाँ गलत Tower में है — Tower ${v.tower} के Guard को Alert भेजें</button>` : ''}
+    </div>
+    ${bottomNav()}
+  `;
+}
+
+/* ---------- VEHICLES / SEARCH ---------- */
+function renderVehicles(){
+  const list = filteredVehicles();
+  const floors = state.filters.tower ? buildFloors(getTower(state.filters.tower)) : [];
+  const flats = (state.filters.tower && state.filters.floor) ? buildFlats(getTower(state.filters.tower), state.filters.floor) : [];
+  return `
+    ${header('Vehicles', { right: hasPerm('add_vehicles') ? `<button onclick="setPage('addVehicle')" class="p-2 text-blue-600">${icon('plus','w-5 h-5')}</button>` : '' })}
+    <div class="p-4 space-y-3">
+      <div class="relative">
+        <span class="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">${icon('search','w-4 h-4')}</span>
+        <input id="vehicle-search-input" value="${state.searchQuery}" oninput="state.searchQuery=this.value;renderListOnly()" placeholder="Vehicle, Flat, Tower, Parking..." class="w-full pl-9 pr-3 py-2.5 rounded-xl border border-gray-200 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+      </div>
+      <div class="flex gap-2 overflow-x-auto no-scrollbar pb-1">
+        ${['','car','bike','other'].map(vt => `<button onclick="state.vehicleTypeFilter='${vt}';render()" class="text-xs px-4 py-2 rounded-full font-medium shrink-0 ${state.vehicleTypeFilter===vt?'bg-blue-600 text-white':'bg-white border border-gray-200 text-slate-500'}">${vt===''?'All':vt==='car'?'Cars':vt==='bike'?'Bikes':'Others'}</button>`).join('')}
+      </div>
+      <div class="flex gap-2 overflow-x-auto no-scrollbar pb-1">
+        <select onchange="state.filters.tower=this.value;state.filters.floor='';state.filters.flat='';render()" class="text-xs px-3 py-2 rounded-lg border border-gray-200 bg-white shrink-0">
+          <option value="">सभी Tower</option>
+          ${state.towers.map(t=>`<option value="${t.tower_code}" ${state.filters.tower===t.tower_code?'selected':''}>Tower ${t.tower_code}</option>`).join('')}
+        </select>
+        <select onchange="state.filters.floor=this.value;state.filters.flat='';render()" ${!state.filters.tower?'disabled':''} class="text-xs px-3 py-2 rounded-lg border border-gray-200 bg-white shrink-0 disabled:opacity-40">
+          <option value="">सभी Floor</option>
+          ${floors.map(f=>`<option value="${f}" ${state.filters.floor===f?'selected':''}>${f==='Ground'?'Ground':'Floor '+f}</option>`).join('')}
+        </select>
+        <select onchange="state.filters.flat=this.value;render()" ${!state.filters.floor?'disabled':''} class="text-xs px-3 py-2 rounded-lg border border-gray-200 bg-white shrink-0 disabled:opacity-40">
+          <option value="">सभी Flat</option>
+          ${flats.map(f=>`<option value="${f}" ${state.filters.flat===f?'selected':''}>${f}</option>`).join('')}
+        </select>
+        ${(state.filters.tower||state.filters.floor||state.filters.flat) ? `<button onclick="state.filters={tower:'',floor:'',flat:''};render()" class="text-xs px-3 py-2 rounded-lg bg-rose-50 text-rose-600 shrink-0">Clear</button>` : ''}
+      </div>
+      <button onclick="setPage('camera')" class="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-slate-800 text-white text-sm font-medium">${icon('camera','w-4 h-4')} Camera से Number Plate Search करें</button>
+      <div id="vehicle-list-area">
+        ${!state.vehiclesLoaded ? skeletonCards(4) : (list.length ? list.map(vehicleCard).join('') : emptyState('कोई Vehicle नहीं मिला', hasPerm('add_vehicles') ? 'Vehicle जोड़ें' : null, "setPage('addVehicle')"))}
+      </div>
+    </div>
+    ${fabButton()}
+    ${bottomNav()}
+  `;
+}
+function renderListOnly(){
+  const area = document.getElementById('vehicle-list-area');
+  if(!area) return render();
+  const list = filteredVehicles();
+  area.innerHTML = list.length ? list.map(vehicleCard).join('') : emptyState('कोई Vehicle नहीं मिला', null, '');
+}
+
+/* ---------- ADD VEHICLE (cascading select) ---------- */
+function renderAddVehicle(){
+  const f = state.addVehicle;
+  const t = getTower(f.tower);
+  const floors = t ? buildFloors(t) : [];
+  const flats = (t && f.floor) ? buildFlats(t, f.floor) : [];
+  return `
+    ${header('Add Vehicle', { back:"setPage('vehicles')" })}
+    <div class="p-4 space-y-4">
+      <div class="bg-white rounded-2xl p-4 shadow-[0_2px_12px_rgba(15,23,42,0.06)] border border-gray-50 space-y-3">
+        <div>
+          <label class="text-xs font-semibold text-slate-500">Tower *</label>
+          <select onchange="state.addVehicle.tower=this.value;state.addVehicle.floor='';state.addVehicle.flat='';render()" class="w-full mt-1 px-3 py-3 rounded-xl border border-gray-200 bg-white text-sm">
+            <option value="">-- Tower चुनें --</option>
+            ${state.towers.map(tw=>`<option value="${tw.tower_code}" ${f.tower===tw.tower_code?'selected':''}>Tower ${tw.tower_code}</option>`).join('')}
+          </select>
+        </div>
+        <div>
+          <label class="text-xs font-semibold text-slate-500">Floor *</label>
+          <select onchange="state.addVehicle.floor=this.value;state.addVehicle.flat='';render()" ${!f.tower?'disabled':''} class="w-full mt-1 px-3 py-3 rounded-xl border border-gray-200 bg-white text-sm disabled:bg-gray-50 disabled:text-gray-400">
+            <option value="">${f.tower?'-- Floor चुनें --':'पहले Tower चुनें'}</option>
+            ${floors.map(fl=>`<option value="${fl}" ${f.floor===fl?'selected':''}>${fl==='Ground'?'Ground Floor':'Floor '+fl}</option>`).join('')}
+          </select>
+        </div>
+        <div>
+          <label class="text-xs font-semibold text-slate-500">Flat Number *</label>
+          <select onchange="state.addVehicle.flat=this.value;render()" ${!f.floor?'disabled':''} class="w-full mt-1 px-3 py-3 rounded-xl border border-gray-200 bg-white text-sm disabled:bg-gray-50 disabled:text-gray-400">
+            <option value="">${f.floor?'-- Flat चुनें --':'पहले Floor चुनें'}</option>
+            ${flats.map(fn=>`<option value="${fn}" ${f.flat===fn?'selected':''}>${fn}</option>`).join('')}
+          </select>
+        </div>
+        <div>
+          <label class="text-xs font-semibold text-slate-500">Vehicle Number *</label>
+          <input value="${f.vehicle_number}" ${!f.flat?'disabled':''} oninput="state.addVehicle.vehicle_number=this.value" placeholder="जैसे RJ11AB1234" class="w-full mt-1 px-3 py-3 rounded-xl border border-gray-200 bg-white text-sm uppercase disabled:bg-gray-50">
+        </div>
+        <div>
+          <label class="text-xs font-semibold text-slate-500">Vehicle Type</label>
+          <div class="flex gap-2 mt-1">
+            ${['car','bike','other'].map(vt => `<button type="button" onclick="state.addVehicle.vehicle_type='${vt}';render()" class="flex-1 py-2.5 rounded-xl text-xs font-semibold border ${f.vehicle_type===vt?'bg-blue-600 text-white border-blue-600':'bg-white text-slate-500 border-gray-200'}">${vt==='car'?'Car':vt==='bike'?'Bike':'Other'}</button>`).join('')}
+          </div>
+        </div>
+      </div>
+      <div class="bg-white rounded-2xl p-4 shadow-[0_2px_12px_rgba(15,23,42,0.06)] border border-gray-50 space-y-3">
+        <p class="text-xs font-semibold text-slate-500">Optional जानकारी</p>
+        <input value="${f.parking_number}" oninput="state.addVehicle.parking_number=this.value" placeholder="Parking Number (No / पता नहीं)" class="w-full px-3 py-3 rounded-xl border border-gray-200 bg-white text-sm">
+        <textarea oninput="state.addVehicle.notes=this.value" placeholder="Notes" class="w-full px-3 py-3 rounded-xl border border-gray-200 bg-white text-sm" rows="2">${f.notes}</textarea>
+      </div>
+      <button onclick="submitAddVehicle()" class="w-full py-3.5 rounded-xl bg-blue-600 text-white font-semibold shadow-md shadow-blue-200 active:scale-[0.98] transition shadow-lg shadow-blue-200">Vehicle Save करें</button>
+    </div>
+  `;
+}
+
+/* ---------- EDIT VEHICLE MODAL-LIKE PAGE ---------- */
+function renderEditVehicle(){
+  const f = state.editForm;
+  const t = getTower(f.tower);
+  const floors = t ? buildFloors(t) : [];
+  const flats = (t && f.floor) ? buildFlats(t, f.floor) : [];
+  return `
+    ${header('Edit Vehicle', { back:"state.editingVehicle=null;setPage('vehicles')" })}
+    <div class="p-4 space-y-4">
+      <div class="bg-white rounded-2xl p-4 shadow-[0_2px_12px_rgba(15,23,42,0.06)] border border-gray-50 space-y-3">
+        <div>
+          <label class="text-xs font-semibold text-slate-500">Tower *</label>
+          <select onchange="state.editForm.tower=this.value;state.editForm.floor='';state.editForm.flat='';render()" class="w-full mt-1 px-3 py-3 rounded-xl border border-gray-200 bg-white text-sm">
+            ${state.towers.map(tw=>`<option value="${tw.tower_code}" ${f.tower===tw.tower_code?'selected':''}>Tower ${tw.tower_code}</option>`).join('')}
+          </select>
+        </div>
+        <div>
+          <label class="text-xs font-semibold text-slate-500">Floor *</label>
+          <select onchange="state.editForm.floor=this.value;state.editForm.flat='';render()" class="w-full mt-1 px-3 py-3 rounded-xl border border-gray-200 bg-white text-sm">
+            ${floors.map(fl=>`<option value="${fl}" ${f.floor===fl?'selected':''}>${fl==='Ground'?'Ground Floor':'Floor '+fl}</option>`).join('')}
+          </select>
+        </div>
+        <div>
+          <label class="text-xs font-semibold text-slate-500">Flat *</label>
+          <select onchange="state.editForm.flat=this.value;render()" class="w-full mt-1 px-3 py-3 rounded-xl border border-gray-200 bg-white text-sm">
+            ${flats.map(fn=>`<option value="${fn}" ${f.flat===fn?'selected':''}>${fn}</option>`).join('')}
+          </select>
+        </div>
+        <div>
+          <label class="text-xs font-semibold text-slate-500">Vehicle Number *</label>
+          <input value="${f.vehicle_number}" oninput="state.editForm.vehicle_number=this.value" class="w-full mt-1 px-3 py-3 rounded-xl border border-gray-200 bg-white text-sm uppercase">
+        </div>
+        <div>
+          <label class="text-xs font-semibold text-slate-500">Vehicle Type</label>
+          <div class="flex gap-2 mt-1">
+            ${['car','bike','other'].map(vt => `<button type="button" onclick="state.editForm.vehicle_type='${vt}';render()" class="flex-1 py-2.5 rounded-xl text-xs font-semibold border ${(f.vehicle_type||'car')===vt?'bg-blue-600 text-white border-blue-600':'bg-white text-slate-500 border-gray-200'}">${vt==='car'?'Car':vt==='bike'?'Bike':'Other'}</button>`).join('')}
+          </div>
+        </div>
+      </div>
+      <div class="bg-white rounded-2xl p-4 shadow-[0_2px_12px_rgba(15,23,42,0.06)] border border-gray-50 space-y-3">
+        <input value="${f.parking_number||''}" oninput="state.editForm.parking_number=this.value" placeholder="Parking Number" class="w-full px-3 py-3 rounded-xl border border-gray-200 bg-white text-sm">
+        <textarea oninput="state.editForm.notes=this.value" placeholder="Notes" class="w-full px-3 py-3 rounded-xl border border-gray-200 bg-white text-sm" rows="2">${f.notes||''}</textarea>
+      </div>
+      <button onclick="submitEditVehicle()" class="w-full py-3.5 rounded-xl bg-blue-600 text-white font-semibold shadow-md shadow-blue-200 active:scale-[0.98] transition">Update करें</button>
+    </div>
+  `;
+}
+
+function toDatetimeLocal(iso){
+  if(!iso) return '';
+  const d = new Date(iso);
+  const pad = n => String(n).padStart(2,'0');
+  return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())+'T'+pad(d.getHours())+':'+pad(d.getMinutes());
+}
+function openEditSessionModal(sessionId, defaultDateISO){
+  const session = sessionId ? state.attendance.find(s=>s.id===sessionId) : null;
+  const guardId = state.attendanceGuardId || state.profile.id;
+  const defaultStart = session ? toDatetimeLocal(session.start_time) : (defaultDateISO ? defaultDateISO+'T09:00' : '');
+  const allPlaces = [...state.towers.map(t=>t.tower_code), ...state.dutyPosts.map(p=>p.name)];
+  const root = document.getElementById('modal-root');
+  root.innerHTML = `
+    <div class="fixed inset-0 bg-black/40 z-[90] flex items-end sm:items-center justify-center" onclick="if(event.target===event.currentTarget)document.getElementById('modal-root').innerHTML=''">
+      <div class="bg-white w-full max-w-md rounded-t-2xl sm:rounded-2xl p-5 fade-in">
+        <p class="font-semibold text-slate-900 mb-3">${session?'Attendance Entry Edit करें':'नई Attendance Entry जोड़ें'}</p>
+        <div class="space-y-3">
+          <div>
+            <label class="text-xs font-semibold text-slate-500">Tower / Post</label>
+            <select id="sess-place" class="w-full mt-1 px-3 py-2.5 rounded-xl border border-gray-200 bg-white text-sm">
+              ${allPlaces.map(p=>`<option value="${p}" ${session && session.tower===p?'selected':''}>${p}</option>`).join('')}
+            </select>
+          </div>
+          <div>
+            <label class="text-xs font-semibold text-slate-500">Start Time</label>
+            <input id="sess-start" type="datetime-local" value="${defaultStart}" class="w-full mt-1 px-3 py-2.5 rounded-xl border border-gray-200 bg-white text-sm">
+          </div>
+          <div>
+            <label class="text-xs font-semibold text-slate-500">End Time (खाली छोड़ें अगर अभी भी चालू है)</label>
+            <input id="sess-end" type="datetime-local" value="${session?toDatetimeLocal(session.end_time):''}" class="w-full mt-1 px-3 py-2.5 rounded-xl border border-gray-200 bg-white text-sm">
+          </div>
+        </div>
+        <div class="flex gap-2 mt-4">
+          <button class="flex-1 py-2.5 rounded-xl bg-gray-100 text-slate-700 font-medium text-sm" onclick="document.getElementById('modal-root').innerHTML=''">Cancel</button>
+          <button class="flex-1 py-2.5 rounded-xl bg-blue-600 text-white font-medium text-sm" onclick="submitSessionModal('${session?session.id:''}','${guardId}')">Save</button>
+        </div>
+      </div>
+    </div>`;
+}
+async function submitSessionModal(sessionId, guardId){
+  const place = document.getElementById('sess-place').value;
+  const startVal = document.getElementById('sess-start').value;
+  const endVal = document.getElementById('sess-end').value;
+  if(!startVal){ toast('Start Time भरें','error'); return; }
+  const payload = {
+    tower: place,
+    start_time: new Date(startVal).toISOString(),
+    end_time: endVal ? new Date(endVal).toISOString() : null
+  };
+  let error;
+  if(sessionId){
+    ({ error } = await supabaseClient.from('duty_sessions').update(payload).eq('id', sessionId));
+  } else {
+    ({ error } = await supabaseClient.from('duty_sessions').insert({ ...payload, guard_id: guardId }));
+  }
+  document.getElementById('modal-root').innerHTML = '';
+  if(error){ toast(error.message,'error'); return; }
+  toast('Attendance save हो गई','success');
+  await loadAttendance();
+}
+function deleteDutySession(id){
+  confirmDialog('इस Attendance Entry को हटाना चाहते हैं?', async ()=>{
+    const { error } = await supabaseClient.from('duty_sessions').delete().eq('id', id);
+    if(error){ toast(error.message,'error'); return; }
+    toast('Entry हटा दी गई','success');
+    await loadAttendance();
+  });
+}
+function fmtTime(iso){
+  if(!iso) return '';
+  const d = new Date(iso);
+  return d.toLocaleTimeString('hi-IN', { hour:'2-digit', minute:'2-digit' });
+}
+function fmtDuration(startIso, endIso){
+  const start = new Date(startIso);
+  const end = endIso ? new Date(endIso) : new Date();
+  const mins = Math.max(0, Math.round((end - start) / 60000));
+  const h = Math.floor(mins/60), m = mins%60;
+  return h>0 ? (h+'घं '+m+'मि') : (m+'मि');
+}
+function renderAttendance(){
+  const days = [];
+  const cursor = new Date();
+  cursor.setHours(0,0,0,0);
+  for(let i=0;i<183;i++){
+    const d = new Date(cursor);
+    d.setDate(d.getDate() - i);
+    const dayStart = new Date(d); dayStart.setHours(0,0,0,0);
+    const dayEnd = new Date(d); dayEnd.setHours(23,59,59,999);
+    const sessions = state.attendance.filter(s => {
+      const st = new Date(s.start_time);
+      return st >= dayStart && st <= dayEnd;
+    });
+    days.push({ date: d, sessions });
+  }
+  const totalDutyDays = days.filter(x=>x.sessions.length).length;
+  const totalMinutes = state.attendance.reduce((sum,s)=>{
+    const start = new Date(s.start_time);
+    const end = s.end_time ? new Date(s.end_time) : new Date();
+    return sum + Math.max(0,(end-start)/60000);
+  }, 0);
+  const totalHours = Math.round(totalMinutes/60);
+
+  const months = [];
+  const monthIndex = {};
+  days.forEach(d => {
+    const key = d.date.getFullYear()+'-'+d.date.getMonth();
+    if(!(key in monthIndex)){
+      monthIndex[key] = months.length;
+      months.push({ key, label: d.date.toLocaleDateString('hi-IN', { month:'long', year:'numeric' }), days: [] });
+    }
+    months[monthIndex[key]].days.push(d);
+  });
+  if(state.attendanceOpenMonth === undefined) state.attendanceOpenMonth = months.length ? months[0].key : null;
+
+  return `
+    ${header(state.attendanceGuardName ? state.attendanceGuardName+' की Attendance' : 'My Attendance', { back: state.attendanceGuardName ? "setPage('userDetail')" : "setPage('profile')" })}
+    <div class="p-4 space-y-4">
+      <div class="grid grid-cols-3 gap-2.5">
+        <div class="bg-white rounded-2xl p-3 text-center shadow-[0_2px_12px_rgba(15,23,42,0.06)] border border-gray-50"><p class="text-lg font-bold text-emerald-600">${totalDutyDays}</p><p class="text-[10px] text-slate-400">Duty Days (6 माह)</p></div>
+        <div class="bg-white rounded-2xl p-3 text-center shadow-[0_2px_12px_rgba(15,23,42,0.06)] border border-gray-50"><p class="text-lg font-bold text-blue-600">${totalHours}</p><p class="text-[10px] text-slate-400">कुल घंटे</p></div>
+        <div class="bg-white rounded-2xl p-3 text-center shadow-[0_2px_12px_rgba(15,23,42,0.06)] border border-gray-50"><p class="text-lg font-bold text-rose-500">${183-totalDutyDays}</p><p class="text-[10px] text-slate-400">छुट्टी वाले दिन</p></div>
+      </div>
+      <div class="space-y-3">
+        ${!state.attendanceLoaded ? skeletonCards(4) : months.map(m => {
+          const monthDutyDays = m.days.filter(x=>x.sessions.length).length;
+          const open = state.attendanceOpenMonth === m.key;
+          return `
+          <div class="bg-white rounded-2xl shadow-[0_2px_12px_rgba(15,23,42,0.06)] border border-gray-50 overflow-hidden">
+            <button onclick="state.attendanceOpenMonth = state.attendanceOpenMonth==='${m.key}' ? null : '${m.key}'; render()" class="w-full flex items-center justify-between px-4 py-3.5">
+              <span class="font-bold text-slate-900">${m.label}</span>
+              <span class="flex items-center gap-2">
+                <span class="text-[11px] px-2 py-1 rounded-full bg-emerald-50 text-emerald-600 font-medium">${monthDutyDays} Duty Days</span>
+                <span class="text-slate-400 transition ${open?'rotate-90':''}">${icon('chevron','w-4 h-4')}</span>
+              </span>
+            </button>
+            ${open ? `<div class="px-3 pb-3 space-y-2">
+              ${m.days.map(d => {
+                const dateLabel = d.date.toLocaleDateString('hi-IN', { day:'2-digit', month:'short', weekday:'short' });
+                const dateISO = d.date.getFullYear()+'-'+String(d.date.getMonth()+1).padStart(2,'0')+'-'+String(d.date.getDate()).padStart(2,'0');
+                const canEdit = hasPerm('manage_users');
+                if(!d.sessions.length){
+                  return `<div class="flex items-center justify-between bg-gray-50 rounded-xl px-4 py-2.5">
+                    <span class="text-xs text-slate-400">${dateLabel}</span>
+                    <div class="flex items-center gap-2">
+                      <span class="text-[10px] px-2 py-1 rounded-full bg-gray-100 text-slate-400 font-medium">छुट्टी</span>
+                      ${canEdit ? `<button onclick="openEditSessionModal(null,'${dateISO}')" class="text-blue-500">${icon('plus','w-3.5 h-3.5')}</button>` : ''}
+                    </div>
+                  </div>`;
+                }
+                return `<div class="rounded-xl px-4 py-2.5 border border-emerald-100">
+                  <div class="flex items-center justify-between">
+                    <span class="text-xs font-semibold text-slate-700">${dateLabel}</span>
+                    <div class="flex items-center gap-2">
+                      <span class="text-[10px] px-2 py-1 rounded-full bg-emerald-50 text-emerald-600 font-medium">Duty</span>
+                      ${canEdit ? `<button onclick="openEditSessionModal(null,'${dateISO}')" class="text-blue-500">${icon('plus','w-3.5 h-3.5')}</button>` : ''}
+                    </div>
+                  </div>
+                  ${d.sessions.map(s=>`<div class="flex items-center justify-between mt-1">
+                    <p class="text-[11px] text-slate-500">${dutyPostLabel(s.tower)} • ${fmtTime(s.start_time)} – ${s.end_time?fmtTime(s.end_time):'अभी चालू है'} <span class="text-slate-400">(${fmtDuration(s.start_time,s.end_time)})</span></p>
+                    ${canEdit ? `<span class="flex items-center gap-2 shrink-0 ml-2">
+                      <button onclick="openEditSessionModal('${s.id}')" class="text-amber-500">${icon('edit','w-3.5 h-3.5')}</button>
+                      <button onclick="deleteDutySession('${s.id}')" class="text-rose-500">${icon('trash','w-3.5 h-3.5')}</button>
+                    </span>` : ''}
+                  </div>`).join('')}
+                </div>`;
+              }).join('')}
+            </div>` : ''}
+          </div>`;
+        }).join('')}
+      </div>
+    </div>
+    ${bottomNav()}
+  `;
+}
+function alertCard(a){
+  const mine = state.profile.tower === a.registered_tower;
+  return `
+  <div class="bg-white rounded-2xl p-3.5 mb-3 shadow-[0_2px_12px_rgba(217,119,6,0.08)] border ${a.status==='open'?'border-amber-200':'border-gray-100'} fade-in">
+    <div class="flex items-start gap-3">
+      <div class="w-10 h-10 rounded-xl ${a.status==='open'?'bg-amber-50 text-amber-600':'bg-emerald-50 text-emerald-600'} flex items-center justify-center shrink-0">${icon(a.status==='open'?'warning':'check','w-5 h-5')}</div>
+      <div class="flex-1">
+        <p class="font-bold text-slate-900">${a.vehicle_number}</p>
+        <p class="text-xs text-slate-500 mt-0.5">${mine ? `आपकी Tower ${a.registered_tower} की गाड़ी, Tower ${a.found_tower} में मिली` : `Tower ${a.found_tower} में मिली, यह Tower ${a.registered_tower} की गाड़ी है`}</p>
+        ${a.message ? `<p class="text-sm text-slate-700 mt-1.5 bg-gray-50 rounded-lg px-2.5 py-1.5">${a.message}</p>` : ''}
+        <p class="text-[10px] text-slate-400 mt-1.5">${a.reporter_name||'Guard'} • ${new Date(a.created_at).toLocaleString()}</p>
+        <div class="flex gap-2 mt-2">
+          ${a.reporter_mobile ? `<a href="tel:${a.reporter_mobile}" class="flex-1 flex items-center justify-center gap-1 py-1.5 rounded-lg bg-emerald-50 text-emerald-600 text-xs font-medium">${icon('phone','w-3.5 h-3.5')} Guard को Call करें</a>` : ''}
+          ${a.status==='open' ? `<button onclick="resolveAlert('${a.id}')" class="flex-1 py-1.5 rounded-lg bg-blue-50 text-blue-600 text-xs font-medium">Resolve करें</button>` : `<span class="flex-1 text-center py-1.5 text-xs text-emerald-600 font-medium">Resolved ✓</span>`}
+        </div>
+      </div>
+    </div>
+  </div>`;
+}
+function renderAlerts(){
+  const open = state.alerts.filter(a=>a.status==='open');
+  const resolved = state.alerts.filter(a=>a.status==='resolved');
+  return `
+    ${header('Tower Alerts', { back:"setPage('dashboard')" })}
+    <div class="p-4">
+      ${!state.profile.tower ? `<div class="bg-amber-50 text-amber-700 text-xs rounded-xl p-3 mb-3">कृपया पहले अपनी Profile में अपनी Tower सेट करें ताकि आपको सही Alerts दिखें।</div>` : ''}
+      <p class="text-sm font-semibold text-slate-700 mb-2">Open Alerts (${open.length})</p>
+      ${!state.alertsLoaded ? skeletonCards(2) : (open.length ? open.map(alertCard).join('') : emptyState('कोई खुली Alert नहीं है 🎉'))}
+      ${resolved.length ? `<p class="text-sm font-semibold text-slate-400 mt-5 mb-2">Resolved</p>${resolved.slice(0,10).map(alertCard).join('')}` : ''}
+    </div>
+    ${bottomNav()}
+  `;
+}
+
+async function submitForcePasswordChange(){
+  const p1 = document.getElementById('fpc-new').value;
+  const p2 = document.getElementById('fpc-confirm').value;
+  if(!p1 || p1.length < 6){ toast('Password कम से कम 6 अक्षर का हो','error'); return; }
+  if(p1 !== p2){ toast('Password मेल नहीं खाता','error'); return; }
+  state.loading = true; render();
+  const { error } = await supabaseClient.auth.updateUser({ password: p1 });
+  if(error){ state.loading=false; toast(error.message,'error'); render(); return; }
+  await supabaseClient.from('profiles').update({ must_change_password:false }).eq('id', state.profile.id);
+  state.profile.must_change_password = false;
+  state.loading = false;
+  toast('Password बदल दिया गया','success');
+  if(state.profile.approval_status === 'approved' || (state.profile.roles && state.profile.roles.name==='super_admin')){
+    state.page = 'dashboard'; render(); loadDataForPage('dashboard');
+  } else {
+    state.page = 'pendingApproval'; render();
+  }
+}
+function renderForcePasswordChange(){
+  return `
+  <div class="min-h-screen flex flex-col justify-center px-6 py-10 fade-in bg-gray-50">
+    <div class="flex flex-col items-center mb-6">
+      <div class="w-16 h-16 rounded-full bg-blue-600 text-white flex items-center justify-center mb-3 shadow-lg shadow-blue-200">${icon('shield','w-8 h-8')}</div>
+      <h1 class="text-lg font-bold text-slate-900 text-center">नया Password बनाएं</h1>
+      <p class="text-sm text-slate-500 text-center mt-2 max-w-xs">Temporary Password से login हो गया है। आगे इस्तेमाल के लिए अपना खुद का नया Password बनाएं।</p>
+    </div>
+    <div class="space-y-3">
+      ${inputWithIcon('fpc-new','password','नया Password','shield')}
+      ${inputWithIcon('fpc-confirm','password','Confirm Password','shield')}
+      <button onclick="submitForcePasswordChange()" class="w-full py-3 rounded-xl bg-blue-600 text-white font-semibold shadow-md shadow-blue-200 ${state.loading?'opacity-60':''}" ${state.loading?'disabled':''}>
+        ${state.loading ? 'कृपया रुकें...' : 'Password Save करें'}
+      </button>
+    </div>
+  </div>`;
+}
+function renderPendingApproval(){
+  return `
+  <div class="min-h-screen flex flex-col items-center justify-center px-6 text-center bg-gray-50">
+    <div class="w-20 h-20 rounded-full bg-amber-50 text-amber-500 flex items-center justify-center mb-4">${icon('shield','w-10 h-10')}</div>
+    <h1 class="text-lg font-bold text-slate-900">Approval का इंतज़ार है</h1>
+    <p class="text-sm text-slate-500 mt-2 max-w-xs">आपका account बन गया है, लेकिन app इस्तेमाल करने से पहले Admin को इसे approve करना होगा। कृपया अपने Admin से संपर्क करें।</p>
+    <button onclick="confirmDialog('Logout करना चाहते हैं?', doLogout, {title:'Logout'})" class="mt-6 px-6 py-2.5 rounded-xl bg-gray-100 text-slate-600 text-sm font-semibold">Logout</button>
+  </div>`;
+}
+function renderAccessRejected(){
+  return `
+  <div class="min-h-screen flex flex-col items-center justify-center px-6 text-center bg-gray-50">
+    <div class="w-20 h-20 rounded-full bg-rose-50 text-rose-500 flex items-center justify-center mb-4">${icon('warning','w-10 h-10')}</div>
+    <h1 class="text-lg font-bold text-slate-900">Access Reject कर दिया गया</h1>
+    <p class="text-sm text-slate-500 mt-2 max-w-xs">आपके account को Admin ने approve नहीं किया है। ज़्यादा जानकारी के लिए Admin से संपर्क करें।</p>
+    <button onclick="confirmDialog('Logout करना चाहते हैं?', doLogout, {title:'Logout'})" class="mt-6 px-6 py-2.5 rounded-xl bg-gray-100 text-slate-600 text-sm font-semibold">Logout</button>
+  </div>`;
+}
+
+function renderApprovals(){
+  const pendingReqs = state.vehicleRequests.filter(r=>r.status==='pending');
+  const doneReqs = state.vehicleRequests.filter(r=>r.status!=='pending').slice(0,10);
+  const actionLabel = { add:'नई Vehicle जोड़ना', edit:'Vehicle Edit करना', delete:'Vehicle Delete करना' };
+  return `
+    ${header('Approvals', { back:"setPage('adminPanel')" })}
+    <div class="p-4 space-y-5">
+      <button onclick="openAddGuardModal()" class="w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-blue-600 text-white font-semibold shadow-md shadow-blue-200">${icon('plus','w-4 h-4')} नया Guard Account बनाएं</button>
+      <div>
+        <p class="text-sm font-semibold text-slate-700 mb-2">नए Guards (${state.pendingGuards.length})</p>
+        ${!state.approvalsLoaded ? skeletonCards(2) : (state.pendingGuards.length ? state.pendingGuards.map(u => `
+          <div class="bg-white rounded-2xl p-3.5 mb-3 shadow-[0_2px_12px_rgba(15,23,42,0.06)] border border-gray-50">
+            <div class="flex items-center gap-3">
+              <div class="w-11 h-11 rounded-full bg-blue-50 text-blue-600 flex items-center justify-center overflow-hidden shrink-0">${u.photo_url?`<img src="${u.photo_url}" class="w-full h-full object-cover">`:icon('user','w-5 h-5')}</div>
+              <div class="flex-1">
+                <p class="font-semibold text-slate-900">${u.name||u.email}</p>
+                <p class="text-xs text-slate-400">${u.email}${u.mobile?' • '+u.mobile:''}</p>
+              </div>
+            </div>
+            <div class="flex gap-2 mt-3">
+              <button onclick="approveGuard('${u.id}')" class="flex-1 py-1.5 rounded-lg bg-emerald-50 text-emerald-600 text-xs font-semibold">${icon('check','w-3.5 h-3.5')} Approve</button>
+              <button onclick="rejectGuard('${u.id}')" class="flex-1 py-1.5 rounded-lg bg-rose-50 text-rose-600 text-xs font-semibold">Reject</button>
+            </div>
+          </div>
+        `).join('') : emptyState('कोई नया Guard pending नहीं है'))}
+      </div>
+      <div>
+        <p class="text-sm font-semibold text-slate-700 mb-2">Vehicle बदलाव (${pendingReqs.length})</p>
+        ${!state.approvalsLoaded ? skeletonCards(2) : (pendingReqs.length ? pendingReqs.map(r => `
+          <div class="bg-white rounded-2xl p-3.5 mb-3 shadow-[0_2px_12px_rgba(15,23,42,0.06)] border border-gray-50">
+            <p class="text-xs font-semibold ${r.action==='delete'?'text-rose-600':r.action==='edit'?'text-amber-600':'text-emerald-600'}">${actionLabel[r.action]}</p>
+            <p class="font-bold text-slate-900 mt-1">${(r.payload&&r.payload.vehicle_number) || (r.previous_data&&r.previous_data.vehicle_number) || '-'}</p>
+            ${r.action!=='delete' && r.payload ? `<p class="text-xs text-slate-400">Tower ${r.payload.tower} • Floor ${r.payload.floor} • Flat ${r.payload.flat}</p>` : ''}
+            ${r.action==='delete' && r.previous_data ? `<p class="text-xs text-slate-400">Tower ${r.previous_data.tower} • Floor ${r.previous_data.floor} • Flat ${r.previous_data.flat}</p>` : ''}
+            <p class="text-[10px] text-slate-400 mt-1">${r.requested_by_name||'Guard'} • ${new Date(r.created_at).toLocaleString()}</p>
+            <div class="flex gap-2 mt-3">
+              <button onclick="approveVehicleRequest('${r.id}')" class="flex-1 py-1.5 rounded-lg bg-emerald-50 text-emerald-600 text-xs font-semibold">${icon('check','w-3.5 h-3.5')} Approve</button>
+              <button onclick="rejectVehicleRequest('${r.id}')" class="flex-1 py-1.5 rounded-lg bg-rose-50 text-rose-600 text-xs font-semibold">Reject</button>
+            </div>
+          </div>
+        `).join('') : emptyState('कोई Vehicle बदलाव pending नहीं है'))}
+        ${doneReqs.length ? `<p class="text-xs font-semibold text-slate-400 mt-4 mb-2">पिछले फ़ैसले</p>${doneReqs.map(r=>`
+          <div class="flex items-center justify-between py-2 px-3.5 bg-white rounded-xl mb-2 border border-gray-50">
+            <span class="text-xs text-slate-600">${actionLabel[r.action]} — ${(r.payload&&r.payload.vehicle_number)||(r.previous_data&&r.previous_data.vehicle_number)||''}</span>
+            <span class="text-[10px] font-semibold ${r.status==='approved'?'text-emerald-600':'text-rose-500'}">${r.status==='approved'?'Approved':'Rejected'}</span>
+          </div>
+        `).join('')}` : ''}
+      </div>
+    </div>
+    ${bottomNav()}
+  `;
+}
+function problemCard(p){
+  return `
+  <div class="bg-white rounded-2xl p-3.5 mb-3 shadow-[0_2px_12px_rgba(225,29,72,0.08)] border border-rose-100 fade-in">
+    <div class="flex items-start gap-3">
+      <div class="w-10 h-10 rounded-xl bg-rose-50 text-rose-600 flex items-center justify-center shrink-0">${icon('warning','w-5 h-5')}</div>
+      <div class="flex-1">
+        <p class="font-bold text-slate-900">${p.vehicle_number || '—'}</p>
+        <p class="text-xs text-slate-400">${p.tower?('Tower '+p.tower+' • Floor '+p.floor+' • Flat '+p.flat):'Location अज्ञात'}</p>
+        <p class="text-xs text-rose-600 mt-1 font-medium">${p.reason}</p>
+        <p class="text-[10px] text-slate-300 mt-1">${p.source ? 'Source: '+p.source+' • ' : ''}${new Date(p.created_at).toLocaleString()}</p>
+      </div>
+      <button onclick="deleteProblem('${p.id}')" class="p-2 text-rose-500">${icon('trash','w-4 h-4')}</button>
+    </div>
+  </div>`;
+}
+function renderProblems(){
+  return `
+    ${header('Problems / Duplicates', { back:"setPage('dashboard')" })}
+    <div class="p-4">
+      ${!state.problemsLoaded ? skeletonCards(3) : (state.problems.length ? state.problems.map(problemCard).join('') : emptyState('कोई Problem record नहीं है 🎉'))}
+    </div>
+    ${bottomNav()}
+  `;
+}
+
+/* ---------- BULK ADD ---------- */
+function renderBulkAdd(){
+  return `
+    ${header('Bulk Add', { back:"setPage('vehicles')" })}
+    <div class="p-4 space-y-3">
+      <div class="bg-blue-50 text-blue-700 text-xs rounded-xl p-3 leading-relaxed">
+        हर लाइन में यह format use करें:<br><b>Tower,Floor,Flat,VehicleNumber</b><br>
+        उदाहरण:<br>B,Ground,0001,RJ11AB1234<br>B,1,0101,RJ11CD5678
+      </div>
+      <textarea oninput="state.bulkText=this.value" rows="8" placeholder="यहाँ paste करें..." class="w-full px-3 py-3 rounded-xl border border-gray-200 bg-white text-sm font-mono">${state.bulkText}</textarea>
+      <button onclick="runBulkAdd()" class="w-full py-3.5 rounded-xl bg-blue-600 text-white font-semibold shadow-md shadow-blue-200 active:scale-[0.98] transition">Import करें</button>
+      ${state.bulkResult ? `
+        <div class="bg-white rounded-2xl p-4 shadow-[0_2px_12px_rgba(15,23,42,0.06)] border border-gray-50 space-y-2">
+          <p class="text-sm font-semibold text-slate-700">Import Summary</p>
+          <div class="grid grid-cols-3 gap-2 text-center">
+            <div class="bg-emerald-50 rounded-xl p-2"><p class="text-lg font-bold text-emerald-600">${state.bulkResult.added}</p><p class="text-[10px] text-slate-500">Added</p></div>
+            <div class="bg-amber-50 rounded-xl p-2"><p class="text-lg font-bold text-amber-600">${state.bulkResult.duplicates}</p><p class="text-[10px] text-slate-500">Duplicates</p></div>
+            <div class="bg-rose-50 rounded-xl p-2"><p class="text-lg font-bold text-rose-600">${state.bulkResult.invalid.length}</p><p class="text-[10px] text-slate-500">Invalid</p></div>
+          </div>
+          ${state.bulkResult.invalid.length ? `<div class="text-xs text-rose-500 space-y-1 mt-2">${state.bulkResult.invalid.map(i=>`<p>• ${i.line} — ${i.reason}</p>`).join('')}</div>` : ''}
+        </div>` : ''}
+    </div>
+    ${bottomNav()}
+  `;
+}
+
+/* ---------- PDF IMPORT ---------- */
+function renderPdfImport(){
+  return `
+    ${header('PDF Import', { back:"setPage('vehicles')" })}
+    <div class="p-4 space-y-3">
+      <div class="bg-blue-50 text-blue-700 text-xs rounded-xl p-3 leading-relaxed">PDF में मौजूद vehicle numbers और flat numbers पढ़ने की कोशिश की जाएगी। जो records confirm नहीं हो पाएंगे, वे Problems में चले जाएंगे।</div>
+      <label class="w-full flex flex-col items-center justify-center gap-2 py-8 rounded-2xl border-2 border-dashed border-blue-300 bg-blue-50/50 cursor-pointer">
+        ${icon('pdf','w-8 h-8 text-blue-500')}
+        <span class="text-sm text-blue-600 font-medium">PDF File चुनने के लिए Tap करें</span>
+        <input type="file" accept="application/pdf" class="hidden" onchange="runPdfImport(this.files[0])">
+      </label>
+      ${state.pdfBusy ? `<div class="flex items-center justify-center gap-2 py-4 text-slate-500 text-sm">${icon('car','w-5 h-5 spin')} PDF पढ़ी जा रही है...</div>` : ''}
+      ${state.pdfResult ? `
+        <div class="bg-white rounded-2xl p-4 shadow-[0_2px_12px_rgba(15,23,42,0.06)] border border-gray-50 space-y-2">
+          <p class="text-sm font-semibold text-slate-700">Import Result</p>
+          <div class="grid grid-cols-3 gap-2 text-center">
+            <div class="bg-emerald-50 rounded-xl p-2"><p class="text-lg font-bold text-emerald-600">${state.pdfResult.added}</p><p class="text-[10px] text-slate-500">Added</p></div>
+            <div class="bg-amber-50 rounded-xl p-2"><p class="text-lg font-bold text-amber-600">${state.pdfResult.duplicates}</p><p class="text-[10px] text-slate-500">Duplicates</p></div>
+            <div class="bg-rose-50 rounded-xl p-2"><p class="text-lg font-bold text-rose-600">${state.pdfResult.invalid.length}</p><p class="text-[10px] text-slate-500">Problems में भेजा</p></div>
+          </div>
+          <button onclick="setPage('problems')" class="w-full text-xs text-blue-600 font-medium py-2">Problems देखें →</button>
+        </div>` : ''}
+    </div>
+    ${bottomNav()}
+  `;
+}
+
+/* ---------- CAMERA / OCR ---------- */
+function renderCamera(){
+  return `
+    ${header('Camera Search', { back:"stopCamera();setPage('vehicles')" })}
+    <div class="p-4 space-y-3">
+      ${!state.cameraOn ? `
+        <div class="bg-white rounded-2xl p-8 shadow-[0_2px_12px_rgba(15,23,42,0.06)] border border-gray-50 flex flex-col items-center gap-3">
+          ${icon('camera','w-10 h-10 text-blue-500')}
+          <p class="text-sm text-slate-500 text-center">Number plate को camera के सामने रखें और scan करें</p>
+          <button onclick="startCamera()" class="px-6 py-3 rounded-xl bg-blue-600 text-white text-sm font-semibold">Camera खोलें</button>
+        </div>` : `
+        <div class="rounded-2xl overflow-hidden bg-black relative">
+          <video id="camera-video" class="w-full aspect-[3/4] object-cover" playsinline muted></video>
+        </div>
+        <button onclick="captureAndScan()" ${state.cameraBusy?'disabled':''} class="w-full py-3.5 rounded-xl bg-blue-600 text-white font-semibold shadow-md shadow-blue-200 active:scale-[0.98] transition ${state.cameraBusy?'opacity-60':''}">
+          ${state.cameraBusy ? 'पढ़ा जा रहा है...' : 'Scan करें'}
+        </button>
+        <button onclick="stopCamera()" class="w-full py-2.5 rounded-xl bg-gray-100 text-slate-600 text-sm font-medium">Camera बंद करें</button>
+      `}
+      ${state.cameraResult ? (
+        state.cameraResult.ok ? `
+          <div class="bg-white rounded-2xl p-4 shadow-[0_2px_12px_rgba(15,23,42,0.06)] border border-gray-50">
+            <p class="text-xs text-slate-400">पहचाना गया Number:</p>
+            <p class="font-bold text-lg text-slate-900 mb-2">${state.cameraResult.guess}</p>
+            ${state.cameraResult.matches.length ? state.cameraResult.matches.map(vehicleCard).join('') : `<p class="text-sm text-slate-400">Database में कोई matching vehicle नहीं मिला</p>`}
+          </div>` : `
+          <div class="bg-amber-50 text-amber-700 text-sm rounded-xl p-4">
+            Number plate confidently नहीं पढ़ पाए। कृपया दोबारा साफ़ फोटो लें, या manually search करें।
+          </div>`
+      ) : ''}
+    </div>
+    ${bottomNav()}
+  `;
+}
+
+/* ---------- USERS / ADMIN ---------- */
+function userCard(u){
+  const roleName = u.roles ? u.roles.name : 'user';
+  const badge = { super_admin:'bg-purple-100 text-purple-700', admin:'bg-blue-100 text-blue-700', user:'bg-gray-100 text-gray-600' }[roleName] || 'bg-gray-100 text-gray-600';
+  return `
+  <div class="bg-white rounded-2xl p-3.5 mb-3 shadow-[0_2px_12px_rgba(15,23,42,0.06)] border border-gray-50">
+    <div class="flex items-center justify-between">
+      <div class="flex items-center gap-3">
+        <div class="w-11 h-11 rounded-full bg-blue-50 text-blue-600 flex items-center justify-center overflow-hidden shrink-0 relative">
+          ${u.photo_url ? `<img src="${u.photo_url}" class="w-full h-full object-cover">` : icon('user','w-5 h-5')}
+          ${u.on_duty ? `<span class="absolute bottom-0 right-0 w-3 h-3 rounded-full bg-emerald-500 border-2 border-white"></span>` : ''}
+        </div>
+        <div>
+          <p class="font-semibold text-slate-900">${u.name||u.email}</p>
+          <p class="text-xs text-slate-400">${u.tower?('Tower '+u.tower+' • Flat '+(u.flat||'-')):u.email}</p>
+          ${u.on_duty ? `<p class="text-[10px] text-emerald-600 font-medium mt-0.5">● Duty पर है</p>` : ''}
+        </div>
+      </div>
+      <span class="text-[10px] px-2 py-1 rounded-full font-medium ${badge}">${roleName}</span>
+    </div>
+    <div class="flex gap-2 mt-3 pt-3 border-t border-gray-50">
+      <button onclick="userDetailPerms=null;state.selectedUserId='${u.id}';setPage('userDetail')" class="flex-1 py-1.5 rounded-lg bg-blue-50 text-blue-600 text-xs font-medium">Manage</button>
+      <button onclick="openGuardAttendance('${u.id}','${(u.name||u.email).replace(/'/g,"")}')" class="flex-1 py-1.5 rounded-lg bg-indigo-50 text-indigo-600 text-xs font-medium">Attendance</button>
+      ${u.mobile && hasPerm('call_users') ? `<a href="tel:${u.mobile}" class="flex-1 flex items-center justify-center py-1.5 rounded-lg bg-emerald-50 text-emerald-600 text-xs font-medium">Call</a>` : ''}
+      <button onclick="toggleUserStatus('${u.id}','${u.status}')" class="flex-1 py-1.5 rounded-lg ${u.status==='active'?'bg-rose-50 text-rose-600':'bg-emerald-50 text-emerald-600'} text-xs font-medium">${u.status==='active'?'Block':'Unblock'}</button>
+    </div>
+  </div>`;
+}
+function renderUsers(){
+  return `
+    ${header('Users', { back:"setPage('adminPanel')" })}
+    <div class="p-4">
+      ${!state.usersLoaded ? skeletonCards(3) : (state.users.length ? state.users.map(userCard).join('') : emptyState('कोई user नहीं मिला'))}
+    </div>
+    ${bottomNav()}
+  `;
+}
+let userDetailPerms = null;
+async function openUserDetail(){
+  const u = state.users.find(x=>x.id===state.selectedUserId);
+  if(!u) { setPage('users'); return; }
+  const result = await getEffectivePermsForUser(u);
+  userDetailPerms = result;
+  render();
+}
+function renderUserDetail(){
+  const u = state.users.find(x=>x.id===state.selectedUserId);
+  if(!u) return `${header('User', {back:"setPage('users')"})}<div class="p-6 text-center text-slate-400">User नहीं मिला</div>`;
+  const roleName = u.roles ? u.roles.name : 'user';
+  if(!userDetailPerms){ openUserDetail(); return `${header('User Detail', {back:"setPage('users')"})}${skeletonCards(4)}`; }
+  const overrideMap = userDetailPerms.overrideMap || {};
+  return `
+    ${header('User Detail', { back:"userDetailPerms=null;setPage('users')" })}
+    <div class="p-4 space-y-4">
+      <div class="bg-white rounded-2xl p-4 shadow-[0_2px_12px_rgba(15,23,42,0.06)] border border-gray-50 flex items-center gap-3">
+        <div class="w-14 h-14 rounded-full bg-blue-50 text-blue-600 flex items-center justify-center overflow-hidden">${u.photo_url?`<img src="${u.photo_url}" class="w-full h-full object-cover">`:icon('user','w-6 h-6')}</div>
+        <div>
+          <p class="font-bold text-slate-900">${u.name||u.email}</p>
+          <p class="text-xs text-slate-400">${u.email}</p>
+          <p class="text-xs text-slate-400">${u.mobile||'Mobile नहीं दिया'}</p>
+        </div>
+      </div>
+      <button onclick="openGuardAttendance('${u.id}','${(u.name||u.email).replace(/'/g,"")}')" class="w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-indigo-50 text-indigo-600 text-sm font-semibold">${icon('duplicate','w-4 h-4')} Attendance देखें</button>
+      ${hasPerm('manage_users') && u.mobile ? `<button onclick="openResetPasswordModal('${u.id}','${u.mobile}','${(u.name||u.mobile).replace(/'/g,"")}')" class="w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-amber-50 text-amber-600 text-sm font-semibold">${icon('shield','w-4 h-4')} Password Reset करें</button>` : ''}
+      ${hasPerm('manage_users') ? `
+      <div class="bg-white rounded-2xl p-4 shadow-[0_2px_12px_rgba(15,23,42,0.06)] border border-gray-50">
+        <label class="text-xs font-semibold text-slate-500">Role</label>
+        <select onchange="changeUserRole('${u.id}', this.value)" class="w-full mt-1 px-3 py-3 rounded-xl border border-gray-200 bg-white text-sm">
+          ${['user','admin','super_admin'].map(r=>`<option value="${r}" ${roleName===r?'selected':''}>${r}</option>`).join('')}
+        </select>
+        ${!hasPerm('create_admins') ? '<p class="text-[10px] text-amber-600 mt-1">Admin बनाने के लिए create_admins permission चाहिए</p>' : ''}
+      </div>
+      <div class="bg-white rounded-2xl p-4 shadow-[0_2px_12px_rgba(15,23,42,0.06)] border border-gray-50">
+        <p class="text-xs font-semibold text-slate-500 mb-2">Permissions</p>
+        <div class="space-y-2">
+          ${ALL_PERMISSIONS.map(key => {
+            const isOn = userDetailPerms.set.has(key);
+            const hasOverride = Object.prototype.hasOwnProperty.call(overrideMap, key);
+            return `
+            <div class="flex items-center justify-between py-1.5 border-b border-gray-50 last:border-0">
+              <span class="text-xs text-slate-600">${PERMISSION_LABELS[key]||key}</span>
+              <div class="flex items-center gap-2">
+                ${hasOverride ? `<button onclick="resetUserPermission('${u.id}','${key}').then(openUserDetail)" class="text-[10px] text-blue-500">Reset</button>` : ''}
+                <button onclick="setUserPermission('${u.id}','${key}', ${!isOn}).then(openUserDetail)" class="w-11 h-6 rounded-full ${isOn?'bg-blue-600':'bg-gray-200'} relative transition">
+                  <span class="absolute top-0.5 ${isOn?'right-0.5':'left-0.5'} w-5 h-5 rounded-full bg-white shadow"></span>
+                </button>
+              </div>
+            </div>`;
+          }).join('')}
+        </div>
+      </div>` : ''}
+    </div>
+    ${bottomNav()}
+  `;
+}
+
+/* ---------- SETTINGS ---------- */
+function renderSettings(){
+  return `
+    ${header('Settings', { back:"setPage('adminPanel')" })}
+    <div class="p-4 space-y-4">
+      <div class="bg-white rounded-2xl p-4 shadow-[0_2px_12px_rgba(15,23,42,0.06)] border border-gray-50">
+        <label class="text-xs font-semibold text-slate-500">Society Name</label>
+        <div class="flex gap-2 mt-1">
+          <input id="society-name-input" value="${state.societyName}" class="flex-1 px-3 py-2.5 rounded-xl border border-gray-200 bg-white text-sm">
+          <button onclick="saveSocietyName(document.getElementById('society-name-input').value)" class="px-4 py-2.5 rounded-xl bg-blue-600 text-white text-sm font-semibold">Save</button>
+        </div>
+      </div>
+
+      <div class="bg-white rounded-2xl p-4 shadow-[0_2px_12px_rgba(15,23,42,0.06)] border border-gray-50">
+        <label class="text-xs font-semibold text-slate-500">Admin का WhatsApp Number (Forgot Password के लिए)</label>
+        <div class="flex gap-2 mt-1">
+          <input id="admin-whatsapp-input" value="${state.adminWhatsapp||''}" placeholder="जैसे 919876543210" class="flex-1 px-3 py-2.5 rounded-xl border border-gray-200 bg-white text-sm">
+          <button onclick="saveAdminWhatsapp(document.getElementById('admin-whatsapp-input').value)" class="px-4 py-2.5 rounded-xl bg-blue-600 text-white text-sm font-semibold">Save</button>
+        </div>
+      </div>
+
+      <div class="bg-white rounded-2xl p-4 shadow-[0_2px_12px_rgba(15,23,42,0.06)] border border-gray-50">
+        <p class="text-xs font-semibold text-slate-500 mb-2">Duty Posts (बिना Tower वाली जगहें — जैसे Main Gate, Patrol)</p>
+        <div class="space-y-2 mb-3">
+          ${state.dutyPosts.map(p => `
+            <div class="flex items-center justify-between px-3 py-2 rounded-lg bg-gray-50">
+              <span class="text-sm text-slate-700">${p.name} <span class="text-xs text-slate-400">(max ${p.max_guards} guards)</span></span>
+              <button onclick="deleteDutyPost('${p.id}')" class="text-rose-500">${icon('trash','w-4 h-4')}</button>
+            </div>
+          `).join('')}
+        </div>
+        <div class="flex gap-2">
+          <input id="new-post-name" placeholder="नया Post नाम" class="flex-1 px-3 py-2.5 rounded-xl border border-gray-200 bg-white text-sm">
+          <input id="new-post-cap" type="number" value="2" min="1" class="w-16 px-2 py-2.5 rounded-xl border border-gray-200 bg-white text-sm text-center">
+          <button onclick="addDutyPost(document.getElementById('new-post-name').value, parseInt(document.getElementById('new-post-cap').value))" class="px-4 py-2.5 rounded-xl bg-blue-600 text-white text-sm font-semibold">Add</button>
+        </div>
+      </div>
+
+      <p class="text-sm font-semibold text-slate-700">Tower Structure</p>
+      ${state.towers.map(t => `
+        <div class="bg-white rounded-2xl p-4 shadow-[0_2px_12px_rgba(15,23,42,0.06)] border border-gray-50 space-y-2">
+          <p class="font-bold text-slate-900">Tower ${t.tower_code} <span class="text-xs font-normal text-slate-400">(${t.tower_type})</span></p>
+          ${t.tower_type==='normal' ? `
+            <div class="grid grid-cols-2 gap-2">
+              <div><label class="text-[10px] text-slate-400">Upper Floors</label><input id="tw-${t.tower_code}-uf" type="number" value="${t.upper_floors}" class="w-full px-2 py-2 rounded-lg border border-gray-200 text-sm"></div>
+              <div><label class="text-[10px] text-slate-400">Flats/Floor</label><input id="tw-${t.tower_code}-fpf" type="number" value="${t.flats_per_floor}" class="w-full px-2 py-2 rounded-lg border border-gray-200 text-sm"></div>
+            </div>
+            <button onclick="saveTowerSetting('${t.tower_code}', {upper_floors: parseInt(document.getElementById('tw-${t.tower_code}-uf').value), flats_per_floor: parseInt(document.getElementById('tw-${t.tower_code}-fpf').value)})" class="w-full py-2 rounded-lg bg-blue-50 text-blue-600 text-xs font-semibold">Save Tower ${t.tower_code}</button>
+          ` : `
+            <div class="grid grid-cols-3 gap-2">
+              <div><label class="text-[10px] text-slate-400">Cores</label><input id="tw-${t.tower_code}-c" type="number" value="${t.cores}" class="w-full px-2 py-2 rounded-lg border border-gray-200 text-sm"></div>
+              <div><label class="text-[10px] text-slate-400">Upper Floors/Core</label><input id="tw-${t.tower_code}-cuf" type="number" value="${t.core_upper_floors}" class="w-full px-2 py-2 rounded-lg border border-gray-200 text-sm"></div>
+              <div><label class="text-[10px] text-slate-400">Flats/Core</label><input id="tw-${t.tower_code}-fpc" type="number" value="${t.flats_per_core}" class="w-full px-2 py-2 rounded-lg border border-gray-200 text-sm"></div>
+            </div>
+            <button onclick="saveTowerSetting('${t.tower_code}', {cores: parseInt(document.getElementById('tw-${t.tower_code}-c').value), core_upper_floors: parseInt(document.getElementById('tw-${t.tower_code}-cuf').value), flats_per_core: parseInt(document.getElementById('tw-${t.tower_code}-fpc').value)})" class="w-full py-2 rounded-lg bg-blue-50 text-blue-600 text-xs font-semibold">Save Tower ${t.tower_code}</button>
+          `}
+        </div>
+      `).join('')}
+    </div>
+    ${bottomNav()}
+  `;
+}
+
+/* ---------- PROFILE ---------- */
+function renderProfile(){
+  const p = state.profile;
+  const roleName = p.roles ? p.roles.name : 'user';
+  const menuItem = (icoName, label, fn) => `
+    <button onclick="${fn}" class="w-full flex items-center gap-3 py-3.5 px-1 border-b border-gray-50 last:border-0">
+      <div class="w-9 h-9 rounded-full bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">${icon(icoName,'w-4 h-4')}</div>
+      <span class="flex-1 text-left text-sm font-medium text-slate-700">${label}</span>
+      ${icon('chevron','w-4 h-4 text-slate-300')}
+    </button>`;
+  return `
+    ${header('Profile')}
+    <div class="p-4 space-y-4">
+      <div class="bg-white rounded-2xl p-5 shadow-[0_2px_12px_rgba(15,23,42,0.06)] border border-gray-50 flex flex-col items-center">
+        <div class="w-20 h-20 rounded-full bg-blue-50 text-blue-600 flex items-center justify-center overflow-hidden mb-2">
+          ${p.photo_url ? `<img src="${p.photo_url}" class="w-full h-full object-cover">` : icon('user','w-8 h-8')}
+        </div>
+        <label class="text-xs text-blue-600 font-medium cursor-pointer">
+          Photo बदलें
+          <input type="file" accept="image/*" class="hidden" onchange="uploadAvatar(this.files[0])">
+        </label>
+        <p class="font-bold text-slate-900 mt-2 text-lg">${p.name||'—'}</p>
+        <span class="text-[10px] px-2 py-1 rounded-full bg-blue-100 text-blue-700 mt-1 capitalize">${roleName}</span>
+      </div>
+      <div class="bg-white rounded-2xl px-3 shadow-[0_2px_12px_rgba(15,23,42,0.06)] border border-gray-50">
+        ${menuItem('user','My Profile',"openProfileEdit()")}
+        ${menuItem('duplicate','My Attendance',"openMyAttendance()")}
+        ${hasPerm('manage_users') || hasPerm('manage_settings') ? menuItem('admin','Admin Panel',"setPage('adminPanel')") : ''}
+        ${menuItem('bell','Tower Alerts',"setPage('alerts')")}
+        ${hasPerm('view_problems') ? menuItem('warning','Problems (Duplicates)',"setPage('problems')") : ''}
+        ${hasPerm('view_vehicles') ? menuItem('duplicate','Reports',"setPage('reports')") : ''}
+        ${menuItem('parking','Parking Overview',"setPage('parkingOverview')")}
+        ${menuItem('shield','Help & Support',"openSupportWhatsapp()")}
+      </div>
+      <button onclick="confirmDialog('क्या आप Logout करना चाहते हैं?', doLogout, {title:'Logout'})" class="w-full py-3 rounded-xl bg-rose-50 text-rose-600 font-semibold text-sm flex items-center justify-center gap-2">${icon('logout','w-4 h-4')} Logout</button>
+    </div>
+    ${bottomNav()}
+  `;
+}
+
+function renderAdminPanel(){
+  const card = (icoName, label, fn, bg, fg, badge) => `
+    <button onclick="${fn}" class="relative rounded-2xl p-5 flex flex-col items-center gap-2.5 ${bg} active:scale-95 transition">
+      ${badge ? `<span class="absolute top-2 right-2 min-w-[18px] h-[18px] px-1 rounded-full bg-rose-500 text-white text-[10px] font-bold flex items-center justify-center">${badge}</span>` : ''}
+      <div class="w-11 h-11 rounded-full bg-white/70 ${fg} flex items-center justify-center">${icon(icoName,'w-5 h-5')}</div>
+      <span class="text-xs font-semibold text-center ${fg}">${label}</span>
+    </button>`;
+  const pendingCount = state.pendingGuards.length + state.vehicleRequests.filter(r=>r.status==='pending').length;
+  return `
+    ${header('Admin Panel', { back:"setPage('profile')" })}
+    <div class="p-4">
+      <div class="grid grid-cols-2 gap-3">
+        ${isAdminRole() ? card('shield','Approvals',"setPage('approvals')",'bg-indigo-50','text-indigo-700', pendingCount) : ''}
+        ${hasPerm('manage_users') ? card('admin','Manage Users',"setPage('users')",'bg-purple-50','text-purple-700') : ''}
+        ${hasPerm('view_vehicles') ? card('car','Manage Vehicles',"setPage('vehicles')",'bg-emerald-50','text-emerald-700') : ''}
+        ${hasPerm('view_vehicles') ? card('duplicate','Reports',"setPage('reports')",'bg-blue-50','text-blue-700') : ''}
+        ${card('parking','Parking Overview',"setPage('parkingOverview')",'bg-amber-50','text-amber-700')}
+        ${hasPerm('manage_settings') ? card('settings','Society Settings',"setPage('settings')",'bg-rose-50','text-rose-700') : ''}
+        ${card('bell','Tower Alerts',"setPage('alerts')",'bg-teal-50','text-teal-700')}
+      </div>
+    </div>
+    ${bottomNav()}
+  `;
+}
+
+function renderReports(){
+  const byTower = {};
+  state.vehicles.forEach(v=>{ byTower[v.tower] = (byTower[v.tower]||0) + 1; });
+  const byType = { car:0, bike:0, other:0 };
+  state.vehicles.forEach(v=>{ const t = v.vehicle_type||'car'; byType[t] = (byType[t]||0)+1; });
+  return `
+    ${header('Reports', { back:"setPage('profile')" })}
+    <div class="p-4 space-y-4">
+      <div class="grid grid-cols-3 gap-2.5">
+        <div class="bg-white rounded-2xl p-3 text-center shadow-[0_2px_12px_rgba(15,23,42,0.06)] border border-gray-50"><p class="text-lg font-bold text-blue-600">${byType.car}</p><p class="text-[10px] text-slate-400">Cars</p></div>
+        <div class="bg-white rounded-2xl p-3 text-center shadow-[0_2px_12px_rgba(15,23,42,0.06)] border border-gray-50"><p class="text-lg font-bold text-amber-600">${byType.bike}</p><p class="text-[10px] text-slate-400">Bikes</p></div>
+        <div class="bg-white rounded-2xl p-3 text-center shadow-[0_2px_12px_rgba(15,23,42,0.06)] border border-gray-50"><p class="text-lg font-bold text-purple-600">${byType.other}</p><p class="text-[10px] text-slate-400">Others</p></div>
+      </div>
+      <div class="bg-white rounded-2xl p-4 shadow-[0_2px_12px_rgba(15,23,42,0.06)] border border-gray-50">
+        <p class="text-sm font-semibold text-slate-700 mb-3">Tower के हिसाब से Vehicles</p>
+        <div class="space-y-2">
+          ${state.towers.map(t => {
+            const count = byTower[t.tower_code] || 0;
+            const max = Math.max(1, ...Object.values(byTower));
+            return `<div>
+              <div class="flex justify-between text-xs mb-1"><span class="text-slate-500">Tower ${t.tower_code}</span><span class="font-semibold text-slate-700">${count}</span></div>
+              <div class="h-2 bg-gray-100 rounded-full overflow-hidden"><div class="h-full bg-blue-500" style="width:${(count/max*100)}%"></div></div>
+            </div>`;
+          }).join('')}
+        </div>
+      </div>
+    </div>
+    ${bottomNav()}
+  `;
+}
+
+function renderParkingOverview(){
+  const withParking = state.vehicles.filter(v=>v.parking_number).sort((a,b)=>(a.parking_number||'').localeCompare(b.parking_number||''));
+  const withoutParking = state.vehicles.filter(v=>!v.parking_number);
+  return `
+    ${header('Parking Overview', { back:"setPage('profile')" })}
+    <div class="p-4 space-y-4">
+      <div class="bg-white rounded-2xl p-4 shadow-[0_2px_12px_rgba(15,23,42,0.06)] border border-gray-50 flex justify-around text-center">
+        <div><p class="text-lg font-bold text-emerald-600">${withParking.length}</p><p class="text-[10px] text-slate-400">Parking Assigned</p></div>
+        <div><p class="text-lg font-bold text-rose-600">${withoutParking.length}</p><p class="text-[10px] text-slate-400">No Parking</p></div>
+      </div>
+      <p class="text-sm font-semibold text-slate-700">Parking List (क्रमानुसार)</p>
+      ${!state.vehiclesLoaded ? skeletonCards(3) : (withParking.length ? withParking.map(vehicleCard).join('') : emptyState('कोई parking assign नहीं है'))}
+    </div>
+    ${bottomNav()}
+  `;
+}
+function renderProfileEdit(){
+  const f = state.profileForm;
+  return `
+    ${header('Edit Profile', { back:"setPage('profile')" })}
+    <div class="p-4 space-y-3">
+      <div class="bg-white rounded-2xl p-4 shadow-[0_2px_12px_rgba(15,23,42,0.06)] border border-gray-50 space-y-3">
+        <input value="${f.name||''}" oninput="state.profileForm.name=this.value" placeholder="Name" class="w-full px-3 py-3 rounded-xl border border-gray-200 bg-white text-sm">
+        <input value="${f.mobile||''}" oninput="state.profileForm.mobile=this.value" placeholder="Mobile" class="w-full px-3 py-3 rounded-xl border border-gray-200 bg-white text-sm">
+        <div class="px-3 py-3 rounded-xl bg-gray-50 text-sm text-slate-500">Tower: <b class="text-slate-700">${f.tower || 'अभी set नहीं है'}</b><br><span class="text-xs">Tower बदलने के लिए Duty ON/OFF वाला बटन इस्तेमाल करें</span></div>
+      </div>
+      <button onclick="submitProfileEdit()" class="w-full py-3.5 rounded-xl bg-blue-600 text-white font-semibold shadow-md shadow-blue-200 active:scale-[0.98] transition">Save Profile</button>
+    </div>
+  `;
+}
+
+/* ============================================================
+   MAIN RENDER SWITCH
+============================================================ */
+function render(){
+  const app = document.getElementById('app');
+  if(state.loading && !state.profile){
+    app.innerHTML = `<div class="min-h-screen flex items-center justify-center">${icon('car','w-8 h-8 text-blue-500 spin')}</div>`;
+    return;
+  }
+  if(!state.session){
+    if(state.page==='config') { app.innerHTML = renderConfigScreen(); return; }
+    if(state.page==='onboarding') { app.innerHTML = renderOnboarding(); return; }
+    if(state.page==='register') { app.innerHTML = renderRegister(); return; }
+    if(state.page==='forgot') { app.innerHTML = renderForgot(); return; }
+    app.innerHTML = renderLogin();
+    return;
+  }
+  if(!state.profile){
+    app.innerHTML = `<div class="min-h-screen flex items-center justify-center">${icon('car','w-8 h-8 text-blue-500 spin')}</div>`;
+    return;
+  }
+  if(state.page==='pendingApproval'){ app.innerHTML = renderPendingApproval(); return; }
+  if(state.page==='forcePasswordChange'){ app.innerHTML = renderForcePasswordChange(); return; }
+  if(state.page==='accessRejected'){ app.innerHTML = renderAccessRejected(); return; }
+  let html = '';
+  switch(state.page){
+    case 'vehicles': html = renderVehicles(); break;
+    case 'addVehicle': html = renderAddVehicle(); break;
+    case 'editVehicle': html = renderEditVehicle(); break;
+    case 'viewVehicle': html = renderViewVehicle(); break;
+    case 'adminPanel': html = renderAdminPanel(); break;
+    case 'reports': html = renderReports(); break;
+    case 'parkingOverview': html = renderParkingOverview(); break;
+    case 'problems': html = renderProblems(); break;
+    case 'alerts': html = renderAlerts(); break;
+    case 'approvals': html = renderApprovals(); break;
+    case 'attendance': html = renderAttendance(); break;
+    case 'bulkAdd': html = renderBulkAdd(); break;
+    case 'pdfImport': html = renderPdfImport(); break;
+    case 'camera': html = renderCamera(); break;
+    case 'users': html = renderUsers(); break;
+    case 'userDetail': html = renderUserDetail(); break;
+    case 'settings': html = renderSettings(); break;
+    case 'profile': html = renderProfile(); break;
+    case 'profileEdit': html = renderProfileEdit(); break;
+    default: html = renderDashboard();
+  }
+  app.innerHTML = html;
+  if(state.page==='vehicles' && state.searchFocus){
+    state.searchFocus = false;
+    const inp = document.getElementById('vehicle-search-input');
+    if(inp) inp.focus();
+  }
+}
+
+// keep editingVehicle page in sync
+const _origSetPage = setPage;
+
+document.addEventListener('DOMContentLoaded', () => {
+  if(state.editingVehicle){ /* no-op placeholder */ }
+  initAuth();
+  // PWA service workers are not needed inside a native Capacitor/WebView APK.
+  // Skipping registration there avoids WebView-origin related fetch failures.
+  const isNativeShell = !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
+  if(!isNativeShell && 'serviceWorker' in navigator){
+    navigator.serviceWorker.register('./sw.js').catch(err=>console.warn('Service worker:', err));
+  }
+});
+// route editVehicle page when openEditVehicle is called
+const _openEditVehicle = openEditVehicle;
+openEditVehicle = function(id){ _openEditVehicle(id); state.page = 'editVehicle'; render(); };
+
+</script>
+</body>
+</html>
